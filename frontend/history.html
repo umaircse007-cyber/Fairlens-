@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FairLens - Audit History</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Outfit:wght@500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <header>
+        <h1>FairLens</h1>
+        <nav>
+            <a href="/">Upload</a>
+            <a href="/view-history" style="color: var(--primary);">Audit History</a>
+        </nav>
+    </header>
+    
+    <div class="container">
+        <div class="card">
+            <h2>Audit History</h2>
+            <p style="color: var(--text-muted); margin-bottom: 2rem;">Log of previously completed fair-lending and bias audits.</p>
+            
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Dataset Name</th>
+                        <th>Date Scanned</th>
+                        <th>Status</th>
+                        <th>Triggered EU Clauses</th>
+                    </tr>
+                </thead>
+                <tbody id="historyTableBody">
+                    <tr><td colspan="5" style="text-align:center;">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        async function loadHistory() {
+            try {
+                const res = await fetch('/api/history/list');
+                const audits = await res.json();
+                
+                const tbody = document.getElementById('historyTableBody');
+                tbody.innerHTML = '';
+                
+                if(audits.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">No audits have been executed yet.</td></tr>';
+                    return;
+                }
+                
+                audits.forEach(a => {
+                    const date = new Date(a.timestamp).toLocaleString();
+                    const statusBadge = a.compliance_status === "Compliant" 
+                        ? `<span class="badge green">Compliant</span>`
+                        : `<span class="badge red">Non-Compliant</span>`;
+                        
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>#${a.id}</td>
+                        <td><strong>${a.filename}</strong></td>
+                        <td>${date}</td>
+                        <td>${statusBadge}</td>
+                        <td>${a.clause_count}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            } catch(e) {
+                console.error(e);
+                document.getElementById('historyTableBody').innerHTML = '<tr><td colspan="5" style="text-align:center; color: var(--danger);">Failed to load history</td></tr>';
+            }
+        }
+        
+        loadHistory();
+    </script>
+</body>
+</html>

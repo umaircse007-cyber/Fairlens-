@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FairLens - Upload</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Outfit:wght@500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <header>
+        <h1>FairLens</h1>
+        <nav>
+            <a href="/">Upload</a>
+            <a href="/view-history">Audit History</a>
+        </nav>
+    </header>
+    
+    <div class="container">
+        <div class="card" id="uploadCard">
+            <h2>Upload Dataset</h2>
+            <p style="color: var(--text-muted); margin-bottom: 2rem;">Upload a CSV dataset to scan for hidden biases.</p>
+            
+            <div class="upload-area" id="dropzone" onclick="document.getElementById('fileInput').click()">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary); margin-bottom: 1rem;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                <h3>Drag & Drop your CSV here</h3>
+                <p>or click to browse</p>
+                <input type="file" id="fileInput" accept=".csv" class="hidden">
+            </div>
+            
+            <div id="loader" class="loader-container hidden">
+                <div class="loader"></div>
+                <p>Running Gemini & Claude Primary Scan...</p>
+            </div>
+        </div>
+
+        <div class="card hidden" id="findingsCard">
+            <h2>Dual-Bot Scan Findings</h2>
+            <ul class="findings-list" id="findingsList"></ul>
+            
+            <div style="margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--border);">
+                <h3>Configure Settings</h3>
+                <label>
+                    Outcome Column Name:
+                    <input type="text" id="outcomeCol" placeholder="e.g., loan_approved">
+                </label>
+                <label>
+                    Favorable Outcome Condition (value):
+                    <input type="text" id="favorableOutcome" placeholder="e.g., 1 or 'Yes'">
+                </label>
+                <label>
+                    Privileged Group Value (For First Sensitive Col - Optional):
+                    <input type="text" id="privilegedGroup" placeholder="e.g., 'Male' or 'White'">
+                </label>
+                <button class="btn" id="runAuditBtn" style="width: 100%; margin-top: 1rem;">Run Full Audit</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const dropzone = document.getElementById('dropzone');
+        const loader = document.getElementById('loader');
+        const findingsCard = document.getElementById('findingsCard');
+        const findingsList = document.getElementById('findingsList');
+        const runAuditBtn = document.getElementById('runAuditBtn');
+        let currentFileId = null;
+        let currentFilename = null;
+        let sensitiveCols = [];
+
+        fileInput.addEventListener('change', handleFile);
+        
+        async function handleFile(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            dropzone.classList.add('hidden');
+            loader.classList.remove('hidden');
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            try {
+                const res = await fetch('/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await res.json();
+                
+                currentFileId = data.file_id;
+                currentFilename = data.filename;
+                loader.classList.add('hidden');
+                findingsCard.classList.remove('hidden');
+                
+                renderFindings(data.findings);
+                localStorage.setItem('currentFileId', currentFileId);
+                localStorage.setItem('currentFilename', currentFilename);
+                localStorage.setItem('currentFilePath', data.filepath);
+                
+            } catch(err) {
+                console.error(err);
+                alert("Upload failed.");
+                loader.classList.add('hidden');
+                dropzone.classList.remove('hidden');
+            }
+        }
+        
+        function renderFindings(findings) {
+            findingsList.innerHTML = '';
+            sensitiveCols = findings.map(f => f.column);
+            
+            if(findings.length === 0) {
+               findingsList.innerHTML = '<li>No sensitive or proxy columns detected.</li>';
+               return;
+            }
+            
+            findings.forEach(f => {
+                const li = document.createElement('li');
+                const tColor = f.type === 'sensitive' ? 'red' : 'orange';
+                const cColor = f.confidence === 'High' ? 'green' : (f.confidence === 'Medium' ? 'warning' : 'red');
+                const badge = f.source === 'Both' ? `<span class="badge blue">Gemini + Claude</span>` : `<span class="badge blue">${f.source || 'AI Scan'}</span>`;
+                
+                li.innerHTML = `
+                    <div class="col-info">
+                        <strong>${f.column}</strong>
+                        <p style="font-size: 0.9rem; color: var(--text-muted); margin-top: 0.25rem;">${f.reason}</p>
+                    </div>
+                    <div class="col-badges">
+                        <span class="badge ${tColor}">${(f.type || 'flagged').toUpperCase()}</span>
+                        ${badge}
+                        <span class="badge ${cColor}">${f.confidence || 'Auto'} Confidence</span>
+                    </div>
+                `;
+                findingsList.appendChild(li);
+            });
+            localStorage.setItem('sensitiveCols', JSON.stringify(sensitiveCols));
+        }
+        
+        runAuditBtn.addEventListener('click', () => {
+            const outcome = document.getElementById('outcomeCol').value;
+            const favorable = document.getElementById('favorableOutcome').value;
+            const priv = document.getElementById('privilegedGroup').value;
+            
+            if(!outcome || !favorable) {
+                alert("Please fill in the outcome configuration.");
+                return;
+            }
+            
+            localStorage.setItem('outcomeCol', outcome);
+            localStorage.setItem('favorableOutcome', favorable);
+            
+            const privGroups = {};
+            if(priv && sensitiveCols.length > 0) {
+                // assume priv group applies to first sensitive column for simplicity
+                privGroups[sensitiveCols[0]] = priv;
+            }
+            localStorage.setItem('privilegedGroups', JSON.stringify(privGroups));
+            
+            window.location.href = "/results";
+        });
+    </script>
+</body>
+</html>
