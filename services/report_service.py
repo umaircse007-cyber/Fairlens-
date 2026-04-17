@@ -85,3 +85,36 @@ def generate_report_data(file_id):
             "legal": {},
             "recommendations": ["Unable to generate report."]
         }
+
+    
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet
+def create_pdf_report(file_id, report_data):
+    try:
+        os.makedirs("data/reports", exist_ok=True)
+        pdf_path = f"data/reports/{file_id}_report.pdf"
+
+        doc = SimpleDocTemplate(pdf_path)
+        styles = getSampleStyleSheet()
+
+        elements = []
+
+        # Title
+        elements.append(Paragraph("FairLens Bias Audit Report", styles["Title"]))
+        elements.append(Spacer(1, 12))
+
+        # Sections
+        for section, content in report_data.items():
+            elements.append(Paragraph(f"<b>{section}</b>", styles["Heading2"]))
+            elements.append(Spacer(1, 8))
+
+            elements.append(Paragraph(str(content), styles["Normal"]))
+            elements.append(Spacer(1, 12))
+
+        doc.build(elements)
+
+        return pdf_path
+
+    except Exception as e:
+        print("PDF error:", e)
+        return None    
