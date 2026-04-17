@@ -34,7 +34,7 @@ def get_client():
     return Groq(api_key=api_key)
 
 
-# ✅ 1. VALIDATE FINDINGS
+# 1. VALIDATE FINDINGS
 def validate_findings_with_claude(columns, samples, gemini_findings):
     try:
         client = get_client()
@@ -83,7 +83,7 @@ Return ONLY JSON:
         return gemini_findings
 
 
-# ✅ 2. COUNTERFACTUAL INTERPRETATION
+#  2. COUNTERFACTUAL INTERPRETATION
 def analyze_counterfactual(flip_rate: float, severity: str):
     try:
         client = get_client()
@@ -115,7 +115,7 @@ Explain in 2-3 simple sentences if this indicates bias.
         return "Unable to generate interpretation."
 
 
-# ✅ 3. EU CLAUSE EXPLANATION
+#  3. EU CLAUSE EXPLANATION
 def interpret_eu_clauses(triggered_clauses: list, audit_context: str):
     try:
         client = get_client()
@@ -149,7 +149,7 @@ Return JSON:
         return {}
 
 
-# ✅ 4. REPORT GENERATION
+#  4. REPORT GENERATION
 def generate_report_sections(audit_results: dict):
     try:
         client = get_client()
