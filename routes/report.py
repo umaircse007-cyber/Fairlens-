@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import FileResponse
-from services.claude_service import generate_report_sections
+from services.groq_service import generate_report_sections
 from services.report_service import create_pdf_report
 import json
 import os

@@ -1,4 +1,4 @@
-from services.claude_service import interpret_eu_clauses
+from services.groq_service import interpret_eu_clauses
 
 def map_eu_clauses(metrics, flip_rate, primary_findings):
     triggered_clauses = []

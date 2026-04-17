@@ -3,7 +3,7 @@ import pandas as pd
 import uuid
 import os
 from services.gemini_service import get_gemini_findings
-from services.claude_service import validate_findings_with_claude
+from services.groq_service import validate_findings_with_claude
 
 router = APIRouter()
 

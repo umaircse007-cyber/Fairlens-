@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Body, HTTPException
 import os
 from services.counterfactual_service import run_counterfactual_test
-from services.claude_service import analyze_counterfactual
+from services.groq_service import analyze_counterfactual
 import json
 
 router = APIRouter()
