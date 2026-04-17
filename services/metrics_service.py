@@ -1,40 +1,106 @@
 import pandas as pd
-import numpy as np
 
-def calculate_demographic_parity(df, sensitive_column, outcome_column):
-    return df.groupby(sensitive_column)[outcome_column].mean().to_dict()
+def calculate_fairness_metrics(filepath, sensitive_columns, outcome_column, favorable_value):
+    try:
+        df = pd.read_csv(filepath)
 
-def calculate_disparate_impact_ratio(df, sensitive_column, outcome_column, privileged_group):
-    rates = df.groupby(sensitive_column)[outcome_column].mean()
-    if privileged_group not in rates or rates[privileged_group] == 0:
-        return 1.0
-    privileged_rate = rates[privileged_group]
-    unprivileged_rate = rates[rates.index != privileged_group].mean()
-    return unprivileged_rate / privileged_rate
+        #  Basic validation
+        if outcome_column not in df.columns:
+            return {}
 
-def calculate_feature_influence(df, outcome_column):
-    scores = {}
-    numeric_df = df.select_dtypes(include=[np.number])
-    if outcome_column in numeric_df.columns:
-        correlations = numeric_df.corr()[outcome_column].drop(outcome_column)
-        for col, val in correlations.items():
-            if not pd.isna(val):
-                scores[col] = float(abs(val))
-    return dict(sorted(scores.items(), key=lambda item: item[1], reverse=True))
+        for col in sensitive_columns:
+            if col not in df.columns:
+                return {}
 
-def run_metrics(filepath, sensitive_columns, outcome_column, privileged_groups):
-    df = pd.read_csv(filepath)
-    results = {
-        "demographic_parity": {},
-        "disparate_impact_ratio": {},
-        "feature_influence": calculate_feature_influence(df, outcome_column)
-    }
-    
-    for sc in sensitive_columns:
-        if sc in df.columns:
-            results["demographic_parity"][sc] = calculate_demographic_parity(df, sc, outcome_column)
-            priv_group = privileged_groups.get(sc)
-            if priv_group is not None:
-                results["disparate_impact_ratio"][sc] = calculate_disparate_impact_ratio(df, sc, outcome_column, priv_group)
-            
-    return results
+        if len(df) == 0:
+            return {}
+
+        # Drop missing values (important)
+        df = df.dropna(subset=sensitive_columns + [outcome_column])
+
+        if len(df) == 0:
+            return {}
+
+        results = {}
+
+        #1. Demographic Parity
+        dp_results = {}
+
+        for col in sensitive_columns:
+            groups = df[col].unique()
+            col_result = {}
+
+            for g in groups:
+                group_df = df[df[col] == g]
+
+                if len(group_df) == 0:
+                    continue
+
+                rate = (group_df[outcome_column] == favorable_value).mean()
+                col_result[str(g)] = round(float(rate), 3)
+
+            dp_results[col] = col_result
+
+        results["demographic_parity"] = dp_results
+
+        #2. Disparate Impact Ratio
+        di_results = {}
+
+        for col in sensitive_columns:
+            groups = df[col].unique()
+
+            if len(groups) < 2:
+                continue
+
+            rates = {}
+
+            for g in groups:
+                group_df = df[df[col] == g]
+
+                if len(group_df) == 0:
+                    continue
+
+                rate = (group_df[outcome_column] == favorable_value).mean()
+                rates[g] = rate
+
+            if len(rates) < 2:
+                continue
+
+            max_rate = max(rates.values())
+            min_rate = min(rates.values())
+
+            # Avoid division by zero
+            if max_rate == 0:
+                di = 0
+            else:
+                di = min_rate / max_rate
+
+            di_results[col] = round(float(di), 3)
+
+        results["disparate_impact_ratio"] = di_results
+
+        #3. Feature Influence (safe correlation)
+        numeric_df = df.select_dtypes(include=["number"])
+
+        if outcome_column in numeric_df.columns and len(numeric_df.columns) > 1:
+            corr = numeric_df.corr()
+
+            if outcome_column in corr:
+                influence = corr[outcome_column].drop(outcome_column)
+
+                influence_dict = {
+                    str(k): round(float(abs(v)), 3)
+                    for k, v in influence.to_dict().items()
+                }
+
+                results["feature_influence"] = influence_dict
+            else:
+                results["feature_influence"] = {}
+        else:
+            results["feature_influence"] = {}
+
+        return results
+
+    except Exception as e:
+        print("Metrics error:", e)
+        return {}
