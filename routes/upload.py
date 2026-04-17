@@ -9,8 +9,13 @@ router = APIRouter()
 
 @router.post("/")
 async def upload_dataset(file: UploadFile = File(...)):
-    if not file.filename.endswith('.csv'):
-        raise HTTPException(400, "File must be a CSV")
+    filename = file.filename or ""
+
+    if not filename:
+        raise HTTPException(status_code=400, detail="No file uploaded")
+
+    if not filename.lower().endswith((".csv", ".xlsx")):
+        raise HTTPException(status_code=400, detail="Only CSV or Excel allowed")
     
     file_id = str(uuid.uuid4())
     filepath = f"data/uploads/{file_id}_{file.filename}"

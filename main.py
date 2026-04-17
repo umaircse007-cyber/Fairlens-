@@ -35,17 +35,17 @@ from routes import (
 )
 
 #  Register routes
-app.include_router(upload.router)
-app.include_router(audit.router)
-app.include_router(counterfactual.router)
-app.include_router(eu_mapper.router)
-app.include_router(fix.router)
-app.include_router(report.router)
-app.include_router(history.router)
+from routes import upload, audit, fix, report, history
+
+app.include_router(upload.router, prefix="/upload")
+app.include_router(audit.router, prefix="/audit")
+app.include_router(fix.router, prefix="/fix")
+app.include_router(report.router, prefix="/report")
+app.include_router(history.router, prefix="/history")
 
 #  Serve frontend safely
 if os.path.exists("frontend"):
-    app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
+    app.mount("/static", StaticFiles(directory="frontend"), name="frontend")
 else:
     print("⚠ Frontend folder not found")
 
@@ -58,3 +58,8 @@ def health_check():
 @app.get("/api")
 def api_root():
     return {"message": "FairLens API running"}
+
+from fastapi.responses import FileResponse
+@app.get("/")
+def serve_home():
+    return FileResponse("frontend/upload.html")
