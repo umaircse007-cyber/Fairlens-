@@ -32,11 +32,24 @@ PROXY_HINTS = {
     "university": "University name can proxy for socioeconomic background and historical access.",
     "college": "College name can proxy for socioeconomic background and historical access.",
     "school": "School name can proxy for socioeconomic background and neighborhood.",
-    "degree": "Degree type can reflect unequal access to educational opportunity.",
     "income": "Income can proxy for socioeconomic background.",
-    "salary": "Salary history can reproduce historical pay inequity.",
-    "experience": "Experience can reflect historical opportunity gaps across groups.",
     "employment_gap": "Employment gaps may proxy for caregiving, disability, or other protected patterns.",
+}
+
+MERIT_BASED_HINTS = {
+    "education",
+    "degree",
+    "experience",
+    "salary",
+    "compensation",
+    "skill",
+    "skills",
+    "score",
+    "merit",
+    "qualification",
+    "certification",
+    "performance",
+    "tenure",
 }
 
 
@@ -59,6 +72,7 @@ def _heuristic_findings(columns: list[str], profile: dict[str, Any]) -> list[dic
         key = str(col).lower().replace(" ", "_")
         finding_type = None
         reason = ""
+        is_merit_based = any(hint in key for hint in MERIT_BASED_HINTS)
 
         for hint, hint_reason in SENSITIVE_HINTS.items():
             if hint in key:
@@ -66,7 +80,7 @@ def _heuristic_findings(columns: list[str], profile: dict[str, Any]) -> list[dic
                 reason = hint_reason
                 break
 
-        if not finding_type:
+        if not finding_type and not is_merit_based:
             for hint, hint_reason in PROXY_HINTS.items():
                 if hint in key:
                     finding_type = "proxy"
@@ -135,6 +149,8 @@ Analyze the dataset column profile below. Identify:
 1. Sensitive attributes such as gender, age, race, ethnicity, disability, religion, nationality, or similar.
 2. Proxy attributes that may correlate with protected groups, such as name, zip code, address, school, university, salary history, or experience.
 3. A short plain-English reason for each flagged column.
+4. Only flag a column if it is a direct protected attribute or a plausible proxy with weak business justification.
+5. Do not flag legitimate merit-based columns such as education, years of experience, skill score, test score, certifications, or salary unless the column is clearly being used as a hidden proxy.
 
 Column profile:
 {json.dumps(profile, indent=2, default=str)}

@@ -5,6 +5,31 @@ from services.dataset_service import load_dataset
 from services.groq_service import analyze_counterfactual
 
 
+PROTECTED_HINTS = {
+    "gender",
+    "sex",
+    "age",
+    "age_group",
+    "race",
+    "ethnicity",
+    "religion",
+    "disability",
+    "nationality",
+    "citizenship",
+    "marital",
+    "pregnancy",
+}
+
+IDENTIFIER_HINTS = {
+    "id",
+    "uuid",
+    "applicant_id",
+    "candidate_id",
+    "employee_id",
+    "user_id",
+}
+
+
 def _encode_features(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     encoded = pd.DataFrame(index=df.index)
     categories = {}
@@ -20,6 +45,22 @@ def _encode_features(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     return encoded, categories
 
 
+def _select_feature_columns(df: pd.DataFrame, sensitive_column: str, outcome_column: str) -> list[str]:
+    feature_cols = []
+
+    for col in df.columns:
+        key = str(col).strip().lower().replace(" ", "_")
+        if col == outcome_column or col == sensitive_column:
+            continue
+        if any(hint == key or key.endswith(f"_{hint}") for hint in PROTECTED_HINTS):
+            continue
+        if any(hint == key or hint in key for hint in IDENTIFIER_HINTS):
+            continue
+        feature_cols.append(col)
+
+    return feature_cols
+
+
 def run_counterfactual_test(filepath, sensitive_column, outcome_column):
     try:
         df = load_dataset(filepath)
@@ -33,13 +74,31 @@ def run_counterfactual_test(filepath, sensitive_column, outcome_column):
         if len(unique_vals) < 2:
             return {"flip_rate": 0, "samples": [], "severity": "Low", "interpretation": "Only one sensitive group was present, so no flip test was possible."}
 
-        X = df.drop(columns=[outcome_column]).copy()
+        feature_cols = _select_feature_columns(df, sensitive_column, outcome_column)
+        if not feature_cols:
+            return {
+                "flip_rate": 0,
+                "samples": [],
+                "severity": "Low",
+                "interpretation": "No non-protected feature columns were available for the counterfactual model.",
+            }
+
+        X = df[feature_cols].copy()
         y = df[outcome_column].astype(str)
         X_encoded, categories = _encode_features(X)
 
         model = DecisionTreeClassifier(max_depth=5, random_state=42)
         model.fit(X_encoded, y)
         original_preds = model.predict(X_encoded)
+
+        if sensitive_column not in X.columns:
+            return {
+                "sensitive_column": sensitive_column,
+                "flip_rate": 0,
+                "samples": [],
+                "severity": "Low",
+                "interpretation": "The protected column was excluded from model training, so changing it did not affect predictions.",
+            }
 
         X_flipped = X.copy()
         for idx in X_flipped.index:

@@ -3,6 +3,9 @@ import pandas as pd
 from services.dataset_service import load_dataset
 
 
+MIN_GROUP_FLOOR = 5
+
+
 def _coerce_favorable(series: pd.Series, favorable_value):
     if pd.api.types.is_numeric_dtype(series):
         try:
@@ -38,6 +41,22 @@ def _encode_for_correlation(df: pd.DataFrame, outcome_column: str, favorable_val
     return encoded
 
 
+def _is_continuous_column(series: pd.Series) -> bool:
+    if not pd.api.types.is_numeric_dtype(series):
+        return False
+
+    non_null = series.dropna()
+    if non_null.empty:
+        return False
+
+    unique_count = non_null.nunique()
+    return unique_count >= max(10, int(len(non_null) * 0.2))
+
+
+def _min_group_size(total_rows: int) -> int:
+    return max(MIN_GROUP_FLOOR, int(total_rows * 0.02))
+
+
 def calculate_fairness_metrics(filepath, sensitive_columns, outcome_column, favorable_value):
     df = load_dataset(filepath)
 
@@ -71,6 +90,17 @@ def calculate_fairness_metrics(filepath, sensitive_columns, outcome_column, favo
     for col in sensitive_columns:
         group_rows = []
         rates = {}
+        valid_rates = {}
+        skipped_groups = []
+
+        if _is_continuous_column(df[col]):
+            plain_language.append(
+                f"{col} looks like a continuous numeric field, so FairLens skipped disparate impact ratio for it and relies on association metrics instead."
+            )
+            demographic_parity[col] = group_rows
+            continue
+
+        min_group_size = _min_group_size(len(df))
 
         for group_value, group_df in df.groupby(col, dropna=False):
             mask = group_df.index
@@ -78,6 +108,10 @@ def calculate_fairness_metrics(filepath, sensitive_columns, outcome_column, favo
             total = int(len(group_df))
             rate = favorable_count / total if total else 0
             rates[str(group_value)] = rate
+            if total >= min_group_size:
+                valid_rates[str(group_value)] = rate
+            else:
+                skipped_groups.append(str(group_value))
             group_rows.append({
                 "group": str(group_value),
                 "total": total,
@@ -88,11 +122,11 @@ def calculate_fairness_metrics(filepath, sensitive_columns, outcome_column, favo
 
         demographic_parity[col] = group_rows
 
-        if len(rates) >= 2:
-            max_group = max(rates, key=rates.get)
-            min_group = min(rates, key=rates.get)
-            max_rate = rates[max_group]
-            min_rate = rates[min_group]
+        if len(valid_rates) >= 2:
+            max_group = max(valid_rates, key=valid_rates.get)
+            min_group = min(valid_rates, key=valid_rates.get)
+            max_rate = valid_rates[max_group]
+            min_rate = valid_rates[min_group]
             ratio = min_rate / max_rate if max_rate else 0
             gap = max_rate - min_rate
 
@@ -106,6 +140,8 @@ def calculate_fairness_metrics(filepath, sensitive_columns, outcome_column, favo
                 "highest_rate": round(max_rate, 4),
                 "gap": round(gap, 4),
                 "gap_points": round(gap * 100, 1),
+                "min_group_size": min_group_size,
+                "skipped_groups": skipped_groups,
             }
 
             if ratio < 0.8:
@@ -113,6 +149,10 @@ def calculate_fairness_metrics(filepath, sensitive_columns, outcome_column, favo
 
             plain_language.append(
                 f"For {col}, {min_group} had a {min_rate * 100:.1f}% favorable outcome rate versus {max_group} at {max_rate * 100:.1f}%, a {gap * 100:.1f} point gap."
+            )
+        elif skipped_groups:
+            plain_language.append(
+                f"FairLens skipped disparate impact ratio for underpowered groups in {col}. Groups with fewer than {min_group_size} rows were excluded from the 80% rule calculation."
             )
 
     feature_influence = {}
