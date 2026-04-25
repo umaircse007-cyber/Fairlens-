@@ -117,7 +117,7 @@ Return ONLY JSON:
     return parsed if isinstance(parsed, list) else fallback
 
 
-def analyze_counterfactual(flip_rate: float, severity: str) -> str:
+def analyze_counterfactual(flip_rate: float, severity: str, sensitive_column: str = "") -> str:
     if severity == "High":
         fallback = "Changing only the sensitive attribute changed many model decisions. This suggests the decision pattern may depend heavily on protected or proxy information."
     elif severity == "Medium":
