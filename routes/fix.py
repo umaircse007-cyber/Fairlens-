@@ -1,9 +1,12 @@
-from fastapi import APIRouter, Body, HTTPException
+import json
 import os
-import pandas as pd
 
+from fastapi import APIRouter, Body, HTTPException
+
+from services.dataset_service import load_dataset
+from services.fix_service import apply_multi_column_fix
 from services.metrics_service import calculate_fairness_metrics
-from services.fix_service import apply_reweighing_and_resample
+
 
 router = APIRouter()
 
@@ -12,81 +15,33 @@ router = APIRouter()
 async def apply_fix(
     file_id: str = Body(...),
     filepath: str = Body(...),
-    sensitive_columns: list = Body(...),
+    sensitive_columns: list[str] = Body(...),
     outcome_column: str = Body(...),
-    favorable_outcome: str | int | float = Body(...)
+    favorable_value: str = Body(...),
 ):
-    try:
-        # ✅ Check file exists
-        if not os.path.exists(filepath):
-            raise HTTPException(status_code=404, detail="Dataset not found")
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="Dataset not found")
 
-        # ✅ Load dataset
-        df = pd.read_csv(filepath)
+    df = load_dataset(filepath)
+    if df.empty:
+        raise HTTPException(status_code=400, detail="Dataset is empty")
 
-        if len(df) == 0:
-            raise HTTPException(status_code=400, detail="Dataset is empty")
+    if outcome_column not in df.columns:
+        raise HTTPException(status_code=400, detail="Invalid outcome column")
 
-        # ✅ Ensure outcome column exists
-        if outcome_column not in df.columns:
-            raise HTTPException(status_code=400, detail="Invalid outcome column")
+    fixed_df = apply_multi_column_fix(df, sensitive_columns, outcome_column, favorable_value)
+    fixed_filepath = f"data/uploads/{file_id}_fixed.csv"
+    fixed_df.to_csv(fixed_filepath, index=False)
 
-        # ✅ Convert favorable outcome type if needed
-        if not pd.api.types.is_string_dtype(df[outcome_column]):
-            try:
-                favorable_outcome = int(favorable_outcome)
-            except:
-                try:
-                    favorable_outcome = float(favorable_outcome)
-                except:
-                    pass  # keep as string if conversion fails
+    original_metrics = calculate_fairness_metrics(filepath, sensitive_columns, outcome_column, favorable_value)
+    fixed_metrics = calculate_fairness_metrics(fixed_filepath, sensitive_columns, outcome_column, favorable_value)
 
-        # ✅ Apply fix (safe copy)
-        df_fixed = df.copy()
+    with open(f"data/uploads/{file_id}_fixed_metrics.json", "w", encoding="utf-8") as f:
+        json.dump(fixed_metrics, f, indent=2)
 
-        for sc in sensitive_columns:
-            if sc not in df_fixed.columns:
-                continue
-
-            df_fixed = apply_reweighing_and_resample(
-                df_fixed,
-                sc,
-                outcome_column,
-                favorable_outcome
-            )
-
-        # ✅ Save fixed dataset
-        os.makedirs("data/uploads", exist_ok=True)
-        fixed_filepath = f"data/uploads/{file_id}_fixed.csv"
-        df_fixed.to_csv(fixed_filepath, index=False)
-
-        # ✅ Recalculate metrics (UPDATED FUNCTION)
-        original_metrics = calculate_fairness_metrics(
-            filepath,
-            sensitive_columns,
-            outcome_column,
-            favorable_outcome
-        )
-
-        fixed_metrics = calculate_fairness_metrics(
-            fixed_filepath,
-            sensitive_columns,
-            outcome_column,
-            favorable_outcome
-        )
-
-        return {
-            "original_metrics": original_metrics,
-            "fixed_metrics": fixed_metrics,
-            "fixed_filepath": fixed_filepath
-        }
-
-    except HTTPException as e:
-        raise e
-
-    except Exception as e:
-        print("Fix error:", e)
-        raise HTTPException(
-            status_code=500,
-            detail="Error applying fairness fix"
-        )
+    return {
+        "original_metrics": original_metrics,
+        "fixed_metrics": fixed_metrics,
+        "fixed_filepath": fixed_filepath,
+        "download_url": f"/download/fixed/{file_id}",
+    }

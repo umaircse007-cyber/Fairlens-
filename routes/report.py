@@ -1,32 +1,21 @@
 from fastapi import APIRouter, Body, HTTPException
-from services.report_service import generate_report_data, create_pdf_report
 
-router = APIRouter(prefix="/report", tags=["Report"])
+from services.report_service import create_pdf_report, generate_report_data
+
+
+router = APIRouter()
 
 
 @router.post("/")
-async def generate_report(file_id: str = Body(...)):
-    try:
-        # ✅ Generate report data
-        report_data = generate_report_data(file_id)
+async def generate_report(file_id: str = Body(..., embed=True)):
+    report_data = generate_report_data(file_id)
+    if not report_data:
+        raise HTTPException(status_code=404, detail="Report data not found")
 
-        if not report_data:
-            raise HTTPException(status_code=404, detail="Report data not found")
+    pdf_path = create_pdf_report(file_id, report_data)
 
-        # ✅ Generate PDF
-        pdf_path = create_pdf_report(file_id, report_data)
-
-        return {
-            "report": report_data,
-            "pdf_path": pdf_path
-        }
-
-    except HTTPException as e:
-        raise e
-
-    except Exception as e:
-        print("Report route error:", e)
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to generate report"
-        )
+    return {
+        "report": report_data,
+        "pdf_path": pdf_path,
+        "download_url": f"/download/report/{file_id}",
+    }

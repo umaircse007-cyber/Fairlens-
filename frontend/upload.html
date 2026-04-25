@@ -5,189 +5,221 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FairLens - Upload</title>
     <link rel="stylesheet" href="/static/style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Outfit:wght@500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@600;700&display=swap" rel="stylesheet">
 </head>
 <body>
-    <header>
-        <h1>FairLens</h1>
-        <nav>
-            <a href="/">Upload</a>
-            <a href="/view-history">Audit History</a>
-        </nav>
-    </header>
-    
-    <div class="container">
-        <div class="card" id="uploadCard">
-            <h2>Upload Dataset</h2>
-            <p style="color: var(--text-muted); margin-bottom: 2rem;">Upload a CSV dataset to scan for hidden biases.</p>
-            
-            <div class="upload-area" id="dropzone" onclick="document.getElementById('fileInput').click()">
-                <h3>Drag & Drop your CSV here</h3>
-                <p>or click to browse</p>
-                <input type="file" id="fileInput" accept=".csv,.xlsx" class="hidden">
-            </div>
-            
-            <div id="loader" class="loader-container hidden">
-                <div class="loader"></div>
-                <p>Running AI Scan...</p>
+<header>
+    <a class="brand" href="/">FairLens</a>
+    <nav>
+        <a href="/">Upload</a>
+        <a href="/view-history">Audit History</a>
+    </nav>
+</header>
+
+<main class="container">
+    <section class="hero">
+        <div>
+            <p class="eyebrow">AI fairness audit</p>
+            <h1>Upload decision data. Find hidden bias. Generate a regulator-ready report.</h1>
+        </div>
+        <div class="status-strip">
+            <span>Gemini scan</span>
+            <span>Groq validation</span>
+            <span>Metrics</span>
+            <span>Auto-fix</span>
+            <span>PDF</span>
+        </div>
+    </section>
+
+    <section class="panel" id="uploadPanel">
+        <div class="panel-header">
+            <div>
+                <h2>Upload Dataset</h2>
+                <p>CSV and Excel files are supported. FairLens will detect sensitive and proxy columns automatically.</p>
             </div>
         </div>
 
-        <div class="card hidden" id="findingsCard">
-            <h2>AI Scan Findings</h2>
-            <ul class="findings-list" id="findingsList"></ul>
-            
-            <div style="margin-top: 2rem;">
-                <h3>Configure Settings</h3>
-                <input type="text" id="outcomeCol" placeholder="Outcome column (e.g., hired)">
-                <input type="text" id="favorableOutcome" placeholder="Favorable value (e.g., Yes or 1)">
-                <input type="text" id="privilegedGroup" placeholder="Privileged group (optional)">
-                <button class="btn" id="runAuditBtn">Run Full Audit</button>
+        <label class="upload-area" id="dropzone">
+            <input type="file" id="fileInput" accept=".csv,.xlsx,.xls">
+            <strong>Choose or drop your dataset</strong>
+            <span>No coding or formatting required.</span>
+        </label>
+
+        <div id="loader" class="loader-row hidden">
+            <div class="loader"></div>
+            <span>Scanning columns with Gemini and Groq...</span>
+        </div>
+    </section>
+
+    <section class="panel hidden" id="findingsPanel">
+        <div class="panel-header">
+            <div>
+                <h2>AI Scan Findings</h2>
+                <p id="datasetSummary"></p>
+            </div>
+            <button class="secondary-btn" id="newUploadBtn">New Upload</button>
+        </div>
+
+        <div class="grid two">
+            <div>
+                <h3>Review flagged columns</h3>
+                <div id="findingsList" class="finding-stack"></div>
+            </div>
+
+            <div>
+                <h3>Audit settings</h3>
+                <label>
+                    Outcome column
+                    <select id="outcomeCol"></select>
+                </label>
+                <label>
+                    Favorable outcome
+                    <input type="text" id="favorableOutcome" placeholder="Yes, 1, Approved">
+                </label>
+                <button class="primary-btn" id="runAuditBtn">Run Bias Audit</button>
             </div>
         </div>
-    </div>
+    </section>
+</main>
 
-    <script>
-        const fileInput = document.getElementById('fileInput');
-        const dropzone = document.getElementById('dropzone');
-        const loader = document.getElementById('loader');
-        const findingsCard = document.getElementById('findingsCard');
-        const findingsList = document.getElementById('findingsList');
-        const runAuditBtn = document.getElementById('runAuditBtn');
+<script>
+const fileInput = document.getElementById("fileInput");
+const dropzone = document.getElementById("dropzone");
+const loader = document.getElementById("loader");
+const uploadPanel = document.getElementById("uploadPanel");
+const findingsPanel = document.getElementById("findingsPanel");
+const findingsList = document.getElementById("findingsList");
+const datasetSummary = document.getElementById("datasetSummary");
+const outcomeCol = document.getElementById("outcomeCol");
+const favorableOutcome = document.getElementById("favorableOutcome");
+const runAuditBtn = document.getElementById("runAuditBtn");
+const newUploadBtn = document.getElementById("newUploadBtn");
 
-        let currentFileId = null;
-        let currentFilePath = null;
-        let sensitiveCols = [];
+let uploadData = null;
 
-        fileInput.addEventListener('change', handleFile);
+fileInput.addEventListener("change", () => uploadFile(fileInput.files[0]));
 
-        async function handleFile(e) {
-            const file = e.target.files[0];
-            if (!file) return;
+["dragenter", "dragover"].forEach(eventName => {
+    dropzone.addEventListener(eventName, event => {
+        event.preventDefault();
+        dropzone.classList.add("dragover");
+    });
+});
 
-            dropzone.classList.add('hidden');
-            loader.classList.remove('hidden');
+["dragleave", "drop"].forEach(eventName => {
+    dropzone.addEventListener(eventName, event => {
+        event.preventDefault();
+        dropzone.classList.remove("dragover");
+    });
+});
 
-            const formData = new FormData();
-            formData.append('file', file);
+dropzone.addEventListener("drop", event => {
+    const file = event.dataTransfer.files[0];
+    if (file) uploadFile(file);
+});
 
-            try {
-                const res = await fetch("/upload/", {
-                    method: 'POST',
-                    body: formData
-                });
+newUploadBtn.addEventListener("click", () => {
+    localStorage.clear();
+    window.location.href = "/";
+});
 
-                if (!res.ok) {
-                    alert("Upload failed");
-                    resetUI();
-                    return;
-                }
+async function uploadFile(file) {
+    if (!file) return;
 
-                const data = await res.json();
+    loader.classList.remove("hidden");
+    dropzone.classList.add("disabled");
 
-                currentFileId = data.file_id;
-                currentFilePath = data.filepath;
+    const formData = new FormData();
+    formData.append("file", file);
 
-                localStorage.setItem('currentFileId', currentFileId);
-                localStorage.setItem('currentFilePath', currentFilePath);
+    try {
+        const res = await fetch("/upload/", { method: "POST", body: formData });
+        const data = await res.json();
 
-                // ✅ NOW CALL AUDIT (this was missing earlier)
-                await runAudit();
-
-            } catch (err) {
-                console.error(err);
-                alert("Upload failed");
-                resetUI();
-            }
+        if (!res.ok) {
+            throw new Error(data.detail || "Upload failed");
         }
 
-        async function runAudit() {
-            try {
-                const res = await fetch("/audit/", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                    file_id: currentFileId,
-                    filename: "temp",
-                    filepath: currentFilePath,
-                    sensitive_columns: [],
-                    outcome_column: "placeholder",
-                    favorable_value: "placeholder"
-})
-                });
+        uploadData = data;
+        localStorage.setItem("fairlensUpload", JSON.stringify(data));
+        renderFindings(data);
+    } catch (err) {
+        alert(err.message);
+        dropzone.classList.remove("disabled");
+    } finally {
+        loader.classList.add("hidden");
+    }
+}
 
-                if (!res.ok) {
-                    alert("Audit failed");
-                    resetUI();
-                    return;
-                }
+function renderFindings(data) {
+    uploadPanel.classList.add("hidden");
+    findingsPanel.classList.remove("hidden");
+    datasetSummary.textContent = `${data.filename} - ${data.row_count} rows, ${data.column_count} columns`;
 
-                const data = await res.json();
+    outcomeCol.innerHTML = "";
+    data.columns.forEach(col => {
+        const option = document.createElement("option");
+        option.value = col;
+        option.textContent = col;
+        if (col === data.suggested_outcome_column) option.selected = true;
+        outcomeCol.appendChild(option);
+    });
+    favorableOutcome.value = data.suggested_favorable_value || "Yes";
 
-                loader.classList.add('hidden');
-                findingsCard.classList.remove('hidden');
+    findingsList.innerHTML = "";
+    const findings = data.findings || [];
+    if (!findings.length) {
+        findingsList.innerHTML = `<div class="empty-state">No sensitive or proxy columns were detected. Choose columns manually in your dataset before auditing.</div>`;
+        return;
+    }
 
-                renderFindings(data.findings || []);
+    findings.forEach(finding => {
+        const row = document.createElement("label");
+        row.className = "finding-item";
+        row.innerHTML = `
+            <input type="checkbox" value="${escapeHtml(finding.column)}" checked>
+            <div>
+                <div class="finding-title">
+                    <strong>${escapeHtml(finding.column)}</strong>
+                    <span class="badge ${finding.type === "sensitive" ? "red" : "blue"}">${escapeHtml(finding.type || "flagged")}</span>
+                    <span class="badge neutral">${escapeHtml(finding.confidence || "Medium")}</span>
+                </div>
+                <p>${escapeHtml(finding.reason || "Potential fairness-relevant column.")}</p>
+            </div>
+        `;
+        findingsList.appendChild(row);
+    });
+}
 
-            } catch (err) {
-                console.error(err);
-                alert("Audit failed");
-                resetUI();
-            }
-        }
+runAuditBtn.addEventListener("click", () => {
+    const selected = Array.from(findingsList.querySelectorAll("input[type='checkbox']:checked")).map(input => input.value);
+    if (!selected.length) {
+        alert("Select at least one sensitive or proxy column.");
+        return;
+    }
+    if (!outcomeCol.value || !favorableOutcome.value.trim()) {
+        alert("Choose an outcome column and favorable value.");
+        return;
+    }
 
-        function renderFindings(findings) {
-            findingsList.innerHTML = '';
-            sensitiveCols = findings.map(f => f.column);
+    localStorage.setItem("fairlensConfig", JSON.stringify({
+        sensitive_columns: selected,
+        outcome_column: outcomeCol.value,
+        favorable_value: favorableOutcome.value.trim()
+    }));
 
-            if (!findings || findings.length === 0) {
-                findingsList.innerHTML = '<li>No sensitive columns detected.</li>';
-                return;
-            }
+    window.location.href = "/results.html";
+});
 
-            findings.forEach(f => {
-                const li = document.createElement('li');
-
-                li.innerHTML = `
-                    <strong>${f.column}</strong>
-                    <p>${f.reason}</p>
-                    <span>${f.type || "flagged"}</span>
-                `;
-
-                findingsList.appendChild(li);
-            });
-
-            localStorage.setItem('sensitiveCols', JSON.stringify(sensitiveCols));
-        }
-
-        function resetUI() {
-            loader.classList.add('hidden');
-            dropzone.classList.remove('hidden');
-            findingsCard.classList.add('hidden');
-        }
-
-        runAuditBtn.addEventListener('click', () => {
-            const outcome = document.getElementById('outcomeCol').value;
-            const favorable = document.getElementById('favorableOutcome').value;
-            const priv = document.getElementById('privilegedGroup').value;
-
-            if (!outcome || !favorable) {
-                alert("Fill required fields");
-                return;
-            }
-
-            localStorage.setItem('outcomeCol', outcome);
-            localStorage.setItem('favorableOutcome', favorable);
-
-            const privGroups = {};
-            if (priv && sensitiveCols.length > 0) {
-                privGroups[sensitiveCols[0]] = priv;
-            }
-
-            localStorage.setItem('privilegedGroups', JSON.stringify(privGroups));
-
-            window.location.href = "/results.html";
-        });
-    </script>
+function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, char => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+    }[char]));
+}
+</script>
 </body>
 </html>

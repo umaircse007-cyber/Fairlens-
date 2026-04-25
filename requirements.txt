@@ -8,5 +8,7 @@ python-dotenv
 python-multipart
 google-generativeai
 anthropic
+groq
 sqlalchemy
 jinja2
+openpyxl

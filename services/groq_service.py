@@ -1,166 +1,167 @@
-import os
 import json
-from groq import Groq
+import os
+import re
+from typing import Any
 
 
-def safe_json_parse(text, fallback):
+def _clean_response(text: str) -> str:
+    text = (text or "").strip()
+    if text.startswith("```json"):
+        text = text[7:]
+    elif text.startswith("```"):
+        text = text[3:]
+    if text.endswith("```"):
+        text = text[:-3]
+    return text.strip()
+
+
+def _parse_json(text: str, fallback: Any) -> Any:
+    text = _clean_response(text)
     try:
         return json.loads(text)
-    except Exception as e:
-        print("JSON parse error:", e)
-        return fallback
+    except Exception:
+        match = re.search(r"(\[[\s\S]*\]|\{[\s\S]*\})", text)
+        if not match:
+            return fallback
+        try:
+            return json.loads(match.group(1))
+        except Exception:
+            return fallback
 
 
-def clean_response(text):
-    if not text:
-        return ""
-
-    text = text.strip()
-
-    if text.startswith("```json"):
-        text = text[7:-3].strip()
-    elif text.startswith("```"):
-        text = text[3:-3].strip()
-
-    return text
-
-
-def get_client():
-    api_key = os.environ.get("GROQ_API_KEY")
-
+def _client():
+    api_key = (os.environ.get("GROQ_API_KEY") or "").strip()
     if not api_key:
-        raise ValueError("GROQ_API_KEY not set")
+        return None
+
+    try:
+        from groq import Groq
+    except Exception as exc:
+        print("Groq package unavailable:", exc)
+        return None
 
     return Groq(api_key=api_key)
 
 
-# 1. VALIDATE FINDINGS
-def validate_findings_with_claude(columns, samples, gemini_findings):
+def _chat_json(prompt: str, fallback: Any) -> Any:
+    client = _client()
+    if client is None:
+        return fallback
+
     try:
-        client = get_client()
+        response = client.chat.completions.create(
+            model="llama3-8b-8192",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+        )
+        text = response.choices[0].message.content
+        return _parse_json(text, fallback)
+    except Exception as exc:
+        print("Groq fallback:", exc)
+        return fallback
 
-        prompt = f"""
-You are an AI fairness validator.
 
-DATA:
-{json.dumps(samples, indent=2)}
+def validate_findings_with_claude(columns, samples, gemini_findings):
+    fallback = []
+    seen = set()
+    for finding in gemini_findings or []:
+        col = finding.get("column")
+        if not col or col in seen:
+            continue
+        enriched = dict(finding)
+        enriched.setdefault("source", "Gemini")
+        enriched.setdefault("confidence", "Medium")
+        fallback.append(enriched)
+        seen.add(col)
 
-GEMINI FINDINGS:
-{json.dumps(gemini_findings, indent=2)}
+    prompt = f"""
+You are FairLens's secondary fairness validator. Cross-check Gemini's findings.
 
-TASK:
-- Validate findings
-- Add missing ones
-- Assign confidence
+Columns:
+{json.dumps(columns, indent=2, default=str)}
+
+Profile:
+{json.dumps(samples, indent=2, default=str)}
+
+Gemini findings:
+{json.dumps(gemini_findings, indent=2, default=str)}
 
 Return ONLY JSON:
 [
   {{
-    "column": "name",
+    "column": "Column Name",
     "type": "sensitive|proxy",
-    "reason": "explanation",
+    "reason": "plain-English explanation",
     "source": "Gemini|Groq|Both",
     "confidence": "High|Medium|Low"
   }}
 ]
 """
-
-        response = client.chat.completions.create(
-            model="llama3-8b-8192",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2
-        )
-
-        text = response.choices[0].message.content
-        text = clean_response(text)
-
-        parsed = safe_json_parse(text, gemini_findings)
-
-        return parsed if parsed else gemini_findings
-
-    except Exception as e:
-        print("Groq validation error:", e)
-        return gemini_findings
+    parsed = _chat_json(prompt, fallback)
+    return parsed if isinstance(parsed, list) else fallback
 
 
-#  2. COUNTERFACTUAL INTERPRETATION
-def analyze_counterfactual(flip_rate: float, severity: str):
+def analyze_counterfactual(flip_rate: float, severity: str) -> str:
+    if severity == "High":
+        fallback = "Changing only the sensitive attribute changed many model decisions. This suggests the decision pattern may depend heavily on protected or proxy information."
+    elif severity == "Medium":
+        fallback = "Some decisions changed after the sensitive attribute was flipped. This should be reviewed because it may reveal indirect bias."
+    else:
+        fallback = "Few decisions changed when the sensitive attribute was flipped. This suggests low counterfactual sensitivity in this dataset."
+
+    client = _client()
+    if client is None:
+        return fallback
+
     try:
-        client = get_client()
-
-        prompt = f"""
-Flip rate: {flip_rate:.2f}%
-Severity: {severity}
-
-Explain in 2-3 simple sentences if this indicates bias.
-"""
-
         response = client.chat.completions.create(
             model="llama3-8b-8192",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3
+            messages=[{"role": "user", "content": f"Explain in 2 simple sentences whether a {flip_rate:.2f}% counterfactual flip rate with {severity} severity indicates bias."}],
+            temperature=0.3,
         )
-
-        if not response or not response.choices:
-            return "Unable to generate interpretation."
-        content = response.choices[0].message.content
-
-        if not content:
-            return "Unable to generate interpretation."
-
-        return content.strip()
-
-    except Exception as e:
-        print("Groq CF error:", e)
-        return "Unable to generate interpretation."
+        return (response.choices[0].message.content or fallback).strip()
+    except Exception:
+        return fallback
 
 
-#  3. EU CLAUSE EXPLANATION
 def interpret_eu_clauses(triggered_clauses: list, audit_context: str):
-    try:
-        client = get_client()
+    fallback = {
+        c.get("clause", "Clause"): f"This clause is relevant because {c.get('trigger_reason', 'the audit detected a fairness risk')}."
+        for c in triggered_clauses
+    }
 
-        clauses = [c["clause"] for c in triggered_clauses]
+    prompt = f"""
+Explain these EU AI Act risk mappings in simple non-legal language.
 
-        prompt = f"""
-Clauses: {clauses}
-Context: {audit_context}
+Clauses:
+{json.dumps(triggered_clauses, indent=2, default=str)}
 
-Explain each clause in simple terms.
+Context:
+{audit_context}
 
-Return JSON:
-{{
-  "Clause": "Explanation"
-}}
+Return ONLY JSON:
+{{"Article 10(2)(f)": "Explanation"}}
 """
-
-        response = client.chat.completions.create(
-            model="llama3-8b-8192",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3
-        )
-
-        text = clean_response(response.choices[0].message.content)
-
-        return safe_json_parse(text, {})
-
-    except Exception as e:
-        print("Groq EU error:", e)
-        return {}
+    parsed = _chat_json(prompt, fallback)
+    return parsed if isinstance(parsed, dict) else fallback
 
 
-#  4. REPORT GENERATION
 def generate_report_sections(audit_results: dict):
-    try:
-        client = get_client()
+    fallback = {
+        "Executive Summary": "FairLens reviewed the uploaded dataset for sensitive and proxy columns, group outcome gaps, counterfactual sensitivity, and EU AI Act risk indicators.",
+        "Bias Findings": "Review the demographic parity, disparate impact, and feature influence sections for the main drivers of unequal outcomes.",
+        "Legal Risk Assessment": "This report indicates potential compliance risk and is not a legal determination.",
+        "Recommended Actions": "Review flagged columns, retrain with the corrected dataset if appropriate, and document human oversight before deployment.",
+    }
 
-        prompt = f"""
-Generate a structured audit report.
+    prompt = f"""
+Generate a plain-English AI fairness audit report for a non-technical manager.
+Avoid saying the system definitely violates law. Say "may indicate risk" where appropriate.
 
-DATA:
-{json.dumps(audit_results)}
+Audit data:
+{json.dumps(audit_results, indent=2, default=str)}
 
-Return JSON:
+Return ONLY JSON:
 {{
   "Executive Summary": "...",
   "Bias Findings": "...",
@@ -168,17 +169,5 @@ Return JSON:
   "Recommended Actions": "..."
 }}
 """
-
-        response = client.chat.completions.create(
-            model="llama3-8b-8192",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3
-        )
-
-        text = clean_response(response.choices[0].message.content)
-
-        return safe_json_parse(text, {})
-
-    except Exception as e:
-        print("Groq report error:", e)
-        return {}
+    parsed = _chat_json(prompt, fallback)
+    return parsed if isinstance(parsed, dict) and parsed else fallback

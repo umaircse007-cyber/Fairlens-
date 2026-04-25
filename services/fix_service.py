@@ -1,30 +1,41 @@
 import pandas as pd
-import numpy as np
+
 
 def apply_reweighing_and_resample(df, sensitive_column, outcome_column, favorable_outcome):
-    weights = []
-    p_fav = (df[outcome_column] == favorable_outcome).mean()
+    if sensitive_column not in df.columns or outcome_column not in df.columns or df.empty:
+        return df.copy()
+
+    working = df.dropna(subset=[sensitive_column, outcome_column]).copy()
+    if working.empty:
+        return df.copy()
+
+    favorable_mask = working[outcome_column].astype(str).str.strip().str.lower() == str(favorable_outcome).strip().lower()
+    p_fav = favorable_mask.mean()
     p_unfav = 1 - p_fav
-    
-    for idx, row in df.iterrows():
+
+    weights = []
+    for _, row in working.iterrows():
         s_val = row[sensitive_column]
-        o_val = row[outcome_column]
-        
-        p_s = (df[sensitive_column] == s_val).mean()
-        p_s_and_o = ((df[sensitive_column] == s_val) & (df[outcome_column] == o_val)).mean()
-        
-        expected_prob = p_s * (p_fav if o_val == favorable_outcome else p_unfav)
-        actual_prob = p_s_and_o
-        
-        if actual_prob > 0:
-            weight = expected_prob / actual_prob
-        else:
-            weight = 1.0
-        weights.append(weight)
-        
-    df_temp = df.copy()
-    df_temp['sample_weight'] = weights
-    
-    df_fixed = df_temp.sample(n=len(df_temp), replace=True, weights='sample_weight', random_state=42)
-    df_fixed = df_fixed.drop(columns=['sample_weight'])
-    return df_fixed
+        outcome_is_fav = str(row[outcome_column]).strip().lower() == str(favorable_outcome).strip().lower()
+        p_s = (working[sensitive_column] == s_val).mean()
+        p_s_and_o = ((working[sensitive_column] == s_val) & (favorable_mask == outcome_is_fav)).mean()
+        expected_prob = p_s * (p_fav if outcome_is_fav else p_unfav)
+        weights.append(expected_prob / p_s_and_o if p_s_and_o else 1.0)
+
+    working["_fairlens_weight"] = weights
+    fixed = working.sample(
+        n=len(working),
+        replace=True,
+        weights="_fairlens_weight",
+        random_state=42,
+    ).drop(columns=["_fairlens_weight"])
+
+    return fixed.reset_index(drop=True)
+
+
+def apply_multi_column_fix(df: pd.DataFrame, sensitive_columns, outcome_column, favorable_outcome) -> pd.DataFrame:
+    fixed = df.copy()
+    for col in sensitive_columns:
+        if col in fixed.columns:
+            fixed = apply_reweighing_and_resample(fixed, col, outcome_column, favorable_outcome)
+    return fixed

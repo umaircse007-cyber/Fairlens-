@@ -7,149 +7,361 @@
     <link rel="stylesheet" href="/static/style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
-
 <body>
 <header>
-    <h1>FairLens</h1>
+    <a class="brand" href="/">FairLens</a>
     <nav>
         <a href="/">Upload</a>
+        <a href="/view-history">Audit History</a>
     </nav>
 </header>
 
-<div class="container" id="loadingView">
-    <h2>Running Audit...</h2>
-</div>
+<main class="container">
+    <section class="panel" id="loadingPanel">
+        <div class="loader-row">
+            <div class="loader"></div>
+            <span id="loadingText">Running fairness audit...</span>
+        </div>
+    </section>
 
-<div class="container hidden" id="resultsView">
-    <h2>Audit Results</h2>
-    <p><strong>Dataset:</strong> <span id="filenameSpan"></span></p>
+    <section class="hidden" id="resultsPanel">
+        <div class="page-heading">
+            <div>
+                <p class="eyebrow">Audit results</p>
+                <h1 id="datasetTitle">FairLens Audit</h1>
+            </div>
+            <div class="action-row">
+                <a class="secondary-btn" href="/">New Audit</a>
+                <a class="primary-btn hidden" id="reportDownload" href="#">Download PDF</a>
+            </div>
+        </div>
 
-    <div class="card">
-        <h3>Disparate Impact Ratio</h3>
-        <canvas id="dirChart"></canvas>
-    </div>
+        <div class="summary-grid">
+            <div class="metric-card">
+                <span>Status</span>
+                <strong id="statusValue">-</strong>
+            </div>
+            <div class="metric-card">
+                <span>Counterfactual Flip Rate</span>
+                <strong id="flipRateValue">-</strong>
+            </div>
+            <div class="metric-card">
+                <span>EU AI Act Findings</span>
+                <strong id="clauseValue">-</strong>
+            </div>
+        </div>
 
-    <div class="card">
-        <h3>Feature Influence</h3>
-        <canvas id="fiChart"></canvas>
-    </div>
+        <section class="panel">
+            <h2>Demographic Parity</h2>
+            <div id="parityCards" class="grid two"></div>
+        </section>
 
-    <button id="runFixBtn">Apply Fix</button>
-</div>
+        <section class="grid two">
+            <div class="panel">
+                <h2>Disparate Impact Ratio</h2>
+                <canvas id="dirChart"></canvas>
+            </div>
+            <div class="panel">
+                <h2>Feature Influence</h2>
+                <canvas id="fiChart"></canvas>
+            </div>
+        </section>
+
+        <section class="panel">
+            <h2>Counterfactual Flip Test</h2>
+            <p id="cfInterpretation"></p>
+            <div id="cfSamples" class="table-wrap"></div>
+        </section>
+
+        <section class="panel">
+            <div class="panel-header">
+                <div>
+                    <h2>Before vs After Fix</h2>
+                    <p>Apply reweighing and compare the same metrics on the corrected dataset.</p>
+                </div>
+                <button class="primary-btn" id="fixBtn">Apply Auto-Fix</button>
+            </div>
+            <div id="fixResults" class="hidden"></div>
+        </section>
+
+        <section class="panel">
+            <h2>EU AI Act Mapper</h2>
+            <div id="euClauses" class="finding-stack"></div>
+        </section>
+
+        <section class="panel">
+            <h2>Plain-English Report</h2>
+            <div id="reportSections" class="report-section"></div>
+        </section>
+    </section>
+</main>
 
 <script>
-const fileId = localStorage.getItem('currentFileId');
-const filename = localStorage.getItem('currentFilename');
-const filepath = localStorage.getItem('currentFilePath');
+const upload = JSON.parse(localStorage.getItem("fairlensUpload") || "null");
+const config = JSON.parse(localStorage.getItem("fairlensConfig") || "null");
 
-const sensitiveCols = JSON.parse(localStorage.getItem('sensitiveCols') || '[]');
-const outcomeCol = localStorage.getItem('outcomeCol') || "";
-const favorableOutcome = localStorage.getItem('favorableOutcome') || "Yes";
+const loadingPanel = document.getElementById("loadingPanel");
+const loadingText = document.getElementById("loadingText");
+const resultsPanel = document.getElementById("resultsPanel");
+const fixBtn = document.getElementById("fixBtn");
 
-document.getElementById('filenameSpan').innerText = filename || "Unknown";
+let auditMetrics = null;
+let cfData = null;
+let euData = null;
+let reportData = null;
+let dirChart = null;
+let fiChart = null;
 
-async function runAuditFlow() {
-    if (!fileId || !filepath) {
-        alert("Missing file info");
-        window.location.href = "/";
+if (!upload || !config) {
+    alert("Missing upload information. Start a new audit.");
+    window.location.href = "/";
+} else {
+    runFullPipeline();
+}
+
+async function runFullPipeline() {
+    try {
+        document.getElementById("datasetTitle").textContent = upload.filename;
+
+        loadingText.textContent = "Running demographic parity, disparate impact, and feature influence checks...";
+        const auditRes = await postJson("/audit/", {
+            file_id: upload.file_id,
+            filepath: upload.filepath,
+            sensitive_columns: config.sensitive_columns,
+            outcome_column: config.outcome_column,
+            favorable_value: config.favorable_value
+        });
+        auditMetrics = auditRes.metrics;
+
+        loadingText.textContent = "Running counterfactual flip test...";
+        cfData = await postJson("/counterfactual/", {
+            file_id: upload.file_id,
+            filepath: upload.filepath,
+            sensitive_column: config.sensitive_columns[0],
+            outcome_column: config.outcome_column
+        });
+
+        loadingText.textContent = "Mapping EU AI Act risk indicators...";
+        euData = await postJson("/eu-mapper/", { file_id: upload.file_id });
+
+        loadingText.textContent = "Generating plain-English report and PDF...";
+        reportData = await postJson("/report/", { file_id: upload.file_id });
+
+        await saveHistory();
+        renderAll();
+    } catch (err) {
+        loadingText.textContent = err.message || "Audit failed.";
+    }
+}
+
+async function saveHistory() {
+    const clauses = euData.triggered_clauses || [];
+    await postJson("/history/", {
+        filename: upload.filename,
+        compliance_status: clauses.length ? "Non-Compliant" : "Compliant",
+        clause_count: clauses.length
+    }).catch(() => null);
+}
+
+function renderAll() {
+    loadingPanel.classList.add("hidden");
+    resultsPanel.classList.remove("hidden");
+
+    document.getElementById("statusValue").textContent = auditMetrics.overall_status || "Unknown";
+    document.getElementById("flipRateValue").textContent = `${cfData.flip_rate || 0}%`;
+    document.getElementById("clauseValue").textContent = String((euData.triggered_clauses || []).length);
+
+    renderParity(auditMetrics.demographic_parity || {});
+    renderCharts(auditMetrics);
+    renderCounterfactual(cfData);
+    renderEu(euData.triggered_clauses || []);
+    renderReport(reportData.report || {});
+
+    const reportDownload = document.getElementById("reportDownload");
+    reportDownload.href = reportData.download_url;
+    reportDownload.classList.remove("hidden");
+}
+
+function renderParity(parity) {
+    const container = document.getElementById("parityCards");
+    container.innerHTML = "";
+
+    Object.entries(parity).forEach(([column, rows]) => {
+        const card = document.createElement("div");
+        card.className = "sub-card";
+        card.innerHTML = `<h3>${escapeHtml(column)}</h3>`;
+        rows.forEach(row => {
+            card.innerHTML += `
+                <div class="bar-row">
+                    <span>${escapeHtml(row.group)}</span>
+                    <div><i style="width:${Math.min(row.percent, 100)}%"></i></div>
+                    <strong>${row.percent}%</strong>
+                </div>
+            `;
+        });
+        container.appendChild(card);
+    });
+}
+
+function renderCharts(metrics) {
+    const dirLabels = [];
+    const dirValues = [];
+    Object.entries(metrics.disparate_impact_ratio || {}).forEach(([column, value]) => {
+        dirLabels.push(column);
+        dirValues.push(value.ratio);
+    });
+
+    if (dirChart) dirChart.destroy();
+    dirChart = new Chart(document.getElementById("dirChart"), {
+        type: "bar",
+        data: {
+            labels: dirLabels.length ? dirLabels : ["No data"],
+            datasets: [{ label: "DIR", data: dirValues.length ? dirValues : [0], backgroundColor: "#4f46e5" }]
+        },
+        options: { scales: { y: { beginAtZero: true, suggestedMax: 1 } } }
+    });
+
+    const fiLabels = Object.keys(metrics.feature_influence || {});
+    const fiValues = Object.values(metrics.feature_influence || {});
+    if (fiChart) fiChart.destroy();
+    fiChart = new Chart(document.getElementById("fiChart"), {
+        type: "bar",
+        data: {
+            labels: fiLabels.length ? fiLabels : ["No data"],
+            datasets: [{ label: "Influence", data: fiValues.length ? fiValues : [0], backgroundColor: "#0f766e" }]
+        },
+        options: { indexAxis: "y", scales: { x: { beginAtZero: true, suggestedMax: 1 } } }
+    });
+}
+
+function renderCounterfactual(data) {
+    document.getElementById("cfInterpretation").textContent = data.interpretation || "";
+    const samples = data.samples || [];
+    const container = document.getElementById("cfSamples");
+    if (!samples.length) {
+        container.innerHTML = `<div class="empty-state">No flipped decisions were found in the sample.</div>`;
         return;
     }
+    container.innerHTML = `
+        <table>
+            <thead><tr><th>Row</th><th>Original</th><th>Flipped</th><th>Original Prediction</th><th>Flipped Prediction</th></tr></thead>
+            <tbody>${samples.map(s => `
+                <tr>
+                    <td>${s.row}</td>
+                    <td>${escapeHtml(s.original_sensitive)}</td>
+                    <td>${escapeHtml(s.flipped_sensitive)}</td>
+                    <td>${escapeHtml(s.original_prediction)}</td>
+                    <td>${escapeHtml(s.flipped_prediction)}</td>
+                </tr>
+            `).join("")}</tbody>
+        </table>
+    `;
+}
 
-    try {
-        const res = await fetch('/audit/', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                file_id: fileId,
-                filename: filename,
-                filepath: filepath,
-                sensitive_columns: sensitiveCols,
-                outcome_column: outcomeCol,
-                favorable_value: favorableOutcome
-            })
-        });
-
-        const data = await res.json();
-
-        if (data.mode !== "full_audit") {
-            alert("Audit not completed properly.");
-            return;
-        }
-
-        document.getElementById('loadingView').classList.add('hidden');
-        document.getElementById('resultsView').classList.remove('hidden');
-
-        renderMetrics(data.metrics);
-
-    } catch (err) {
-        console.error(err);
-        alert("Audit failed");
+function renderEu(clauses) {
+    const container = document.getElementById("euClauses");
+    if (!clauses.length) {
+        container.innerHTML = `<div class="empty-state">No EU AI Act risk indicators were triggered.</div>`;
+        return;
     }
+    container.innerHTML = clauses.map(c => `
+        <div class="finding-item static">
+            <div>
+                <div class="finding-title">
+                    <strong>${escapeHtml(c.clause)} - ${escapeHtml(c.title)}</strong>
+                    <span class="badge orange">${escapeHtml(c.severity)}</span>
+                </div>
+                <p>${escapeHtml(c.trigger_reason)}</p>
+                <p>${escapeHtml(c.explanation)}</p>
+            </div>
+        </div>
+    `).join("");
 }
 
-function renderMetrics(metrics) {
-    // Disparate Impact
-    const dirCtx = document.getElementById('dirChart').getContext('2d');
-
-    const labels = Object.keys(metrics.disparate_impact_ratio || {});
-    const values = Object.values(metrics.disparate_impact_ratio || {});
-
-    new Chart(dirCtx, {
-        type: 'bar',
-        data: {
-            labels: labels.length ? labels : ['N/A'],
-            datasets: [{
-                label: 'DIR',
-                data: values.length ? values : [0],
-            }]
-        }
-    });
-
-    // Feature Influence
-    const fiCtx = document.getElementById('fiChart').getContext('2d');
-
-    const fiKeys = Object.keys(metrics.feature_influence || {});
-    const fiVals = Object.values(metrics.feature_influence || {});
-
-    new Chart(fiCtx, {
-        type: 'bar',
-        data: {
-            labels: fiKeys,
-            datasets: [{
-                label: 'Influence',
-                data: fiVals
-            }]
-        }
-    });
+function renderReport(report) {
+    const sections = report.sections || {};
+    document.getElementById("reportSections").innerHTML = Object.entries(sections).map(([title, body]) => `
+        <article>
+            <h3>${escapeHtml(title)}</h3>
+            <p>${escapeHtml(body)}</p>
+        </article>
+    `).join("");
 }
 
-// FIX BUTTON (basic working)
-document.getElementById('runFixBtn').addEventListener('click', async () => {
+fixBtn.addEventListener("click", async () => {
+    fixBtn.disabled = true;
+    fixBtn.textContent = "Applying Fix...";
     try {
-        const res = await fetch('/fix/', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                file_id: fileId,
-                filepath: filepath,
-                sensitive_columns: sensitiveCols,
-                outcome_column: outcomeCol,
-                favorable_outcome: favorableOutcome,
-                privileged_groups: {}
-            })
+        const data = await postJson("/fix/", {
+            file_id: upload.file_id,
+            filepath: upload.filepath,
+            sensitive_columns: config.sensitive_columns,
+            outcome_column: config.outcome_column,
+            favorable_value: config.favorable_value
         });
-
-        const data = await res.json();
-        alert("Fix applied successfully");
-
+        renderFix(data);
     } catch (err) {
-        console.error(err);
-        alert("Fix failed");
+        alert(err.message);
+    } finally {
+        fixBtn.disabled = false;
+        fixBtn.textContent = "Apply Auto-Fix";
     }
 });
 
-// Run on load
-runAuditFlow();
+function renderFix(data) {
+    const before = data.original_metrics.disparate_impact_ratio || {};
+    const after = data.fixed_metrics.disparate_impact_ratio || {};
+    const columns = Array.from(new Set([...Object.keys(before), ...Object.keys(after)]));
+    const rows = columns.map(col => {
+        const b = before[col] || {};
+        const a = after[col] || {};
+        return `
+            <tr>
+                <td>${escapeHtml(col)}</td>
+                <td>${formatRatio(b.ratio)} ${b.passes_80_rule ? "Pass" : "Review"}</td>
+                <td>${formatRatio(a.ratio)} ${a.passes_80_rule ? "Pass" : "Review"}</td>
+                <td>${a.passes_80_rule ? "Passes 80% rule" : "Needs review"}</td>
+            </tr>
+        `;
+    }).join("");
+
+    const container = document.getElementById("fixResults");
+    container.classList.remove("hidden");
+    container.innerHTML = `
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Metric</th><th>Before Fix</th><th>After Fix</th><th>Status</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>
+        <a class="primary-btn" href="${data.download_url}">Download Fixed CSV</a>
+    `;
+}
+
+function formatRatio(value) {
+    return typeof value === "number" ? value.toFixed(2) : "N/A";
+}
+
+async function postJson(url, payload) {
+    const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Request failed");
+    return data;
+}
+
+function escapeHtml(value) {
+    return String(value ?? "").replace(/[&<>"']/g, char => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+    }[char]));
+}
 </script>
 </body>
 </html>

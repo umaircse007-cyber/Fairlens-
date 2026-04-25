@@ -1,65 +1,85 @@
-from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
 import os
-#done
-#  Load environment variables
+
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+
+from services.dataset_service import ensure_data_dirs
+
+
 load_dotenv()
+ensure_data_dirs()
 
-#  Create required directories (prevents crash)
-os.makedirs("data/uploads", exist_ok=True)
-os.makedirs("data/reports", exist_ok=True)
-
-#  Initialize app
 app = FastAPI(title="FairLens API")
 
-#  CORS (useful for frontend requests)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # safe for hackathon
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-#  Import routes AFTER app creation (avoids circular issues)
-from routes import (
-    upload,
-    audit,
-    counterfactual,
-    eu_mapper,
-    fix,
-    report,
-    history,
-)
+from routes import audit, counterfactual, eu_mapper, fix, history, report, upload
 
-#  Register routes
-from routes import upload, audit, fix, report, history
+app.include_router(upload.router, prefix="/upload", tags=["Upload"])
+app.include_router(audit.router, prefix="/audit", tags=["Audit"])
+app.include_router(counterfactual.router, prefix="/counterfactual", tags=["Counterfactual"])
+app.include_router(eu_mapper.router, prefix="/eu-mapper", tags=["EU Mapper"])
+app.include_router(fix.router, prefix="/fix", tags=["Fix"])
+app.include_router(report.router, prefix="/report", tags=["Report"])
+app.include_router(history.router, prefix="/history", tags=["History"])
+app.include_router(history.router, prefix="/api/history", tags=["History"])
 
-app.include_router(upload.router, prefix="/upload")
-app.include_router(audit.router, prefix="/audit")
-app.include_router(fix.router, prefix="/fix")
-app.include_router(report.router, prefix="/report")
-app.include_router(history.router, prefix="/history")
-
-#  Serve frontend safely
 if os.path.exists("frontend"):
     app.mount("/static", StaticFiles(directory="frontend"), name="frontend")
-else:
-    print("⚠ Frontend folder not found")
 
-#  Health check (VERY useful for demo)
+
+@app.get("/")
+def upload_page():
+    return FileResponse("frontend/upload.html")
+
+
+@app.get("/upload.html")
+def upload_html():
+    return FileResponse("frontend/upload.html")
+
+
+@app.get("/results")
+@app.get("/results.html")
+def results_page():
+    return FileResponse("frontend/results.html")
+
+
+@app.get("/view-history")
+@app.get("/history.html")
+def history_page():
+    return FileResponse("frontend/history.html")
+
+
+@app.get("/download/fixed/{file_id}")
+def download_fixed(file_id: str):
+    path = f"data/uploads/{file_id}_fixed.csv"
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Fixed dataset not found")
+    return FileResponse(path, media_type="text/csv", filename=f"fairlens_fixed_{file_id}.csv")
+
+
+@app.get("/download/report/{file_id}")
+def download_report(file_id: str):
+    path = f"data/reports/{file_id}_report.pdf"
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Report not found")
+    return FileResponse(path, media_type="application/pdf", filename=f"fairlens_report_{file_id}.pdf")
+
+
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
 
-#  Root fallback (optional safety)
+
 @app.get("/api")
 def api_root():
     return {"message": "FairLens API running"}
-
-from fastapi.responses import FileResponse
-@app.get("/results")
-def get_results():
-    return FileResponse("frontend/results.html")

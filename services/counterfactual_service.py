@@ -1,65 +1,90 @@
 import pandas as pd
+from sklearn.tree import DecisionTreeClassifier
+
+from services.dataset_service import load_dataset
+from services.groq_service import analyze_counterfactual
+
+
+def _encode_features(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    encoded = pd.DataFrame(index=df.index)
+    categories = {}
+
+    for col in df.columns:
+        if pd.api.types.is_numeric_dtype(df[col]):
+            encoded[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+        else:
+            values = sorted(df[col].astype(str).fillna("").unique().tolist())
+            categories[col] = {v: i for i, v in enumerate(values)}
+            encoded[col] = df[col].astype(str).fillna("").map(categories[col]).fillna(-1)
+
+    return encoded, categories
+
 
 def run_counterfactual_test(filepath, sensitive_column, outcome_column):
-    df = pd.read_csv(filepath)
-    
-    # We will do a simple mock decision rule based on majority features, or simple linear correlation
-    # For a true flip test without a model, we can map closest neighbors and see if different sensitive attribute
-    # yielded a different outcome. Or we simply train a fast simple DecisionTreeClassifier to act as the "rules".
-    from sklearn.tree import DecisionTreeClassifier
-    import category_encoders as ce
-    
-    # Prepare data
-    X = df.drop(columns=[outcome_column])
-    y = df[outcome_column]
-    
-    # Encode categorical
-    encoder = ce.OrdinalEncoder()
-    X_enc = encoder.fit_transform(X)
-    
-    model = DecisionTreeClassifier(max_depth=5, random_state=42)
-    model.fit(X_enc, y)
-    
-    # Original predictions
-    preds_original = model.predict(X_enc)
-    
-    flip_count = 0
-    flipped_samples = []
-    
-    unique_vals = df[sensitive_column].unique()
-    if len(unique_vals) < 2:
-        return 0, [], "Low"
-        
-    X_flipped_enc = X_enc.copy()
-    
-    # Flip the sensitive attribute to another random category
-    for idx, row in X.iterrows():
-        orig_val = row[sensitive_column]
-        new_val = next((v for v in unique_vals if v != orig_val), orig_val)
-        X.at[idx, sensitive_column] = new_val
-    
-    X_flipped_enc = encoder.transform(X)
-    preds_flipped = model.predict(X_flipped_enc)
-    
-    flip_mask = preds_original != preds_flipped
-    flip_count = flip_mask.sum()
-    flip_rate = (flip_count / len(df)) * 100
-    
-    # Gather 5 samples
-    flipped_indices = df[flip_mask].index.tolist()[:5]
-    for idx in flipped_indices:
-        flipped_samples.append({
-            "original_sensitive": str(df.at[idx, sensitive_column]),
-            "flipped_sensitive": str(X.at[idx, sensitive_column]),
-            "original_outcome": str(preds_original[idx]),
-            "flipped_outcome": str(preds_flipped[idx])
-        })
-        
-    if flip_rate < 10:
-        severity = "Low"
-    elif flip_rate <= 25:
-        severity = "Medium"
-    else:
-        severity = "High"
-        
-    return flip_rate, flipped_samples, severity
+    try:
+        df = load_dataset(filepath)
+
+        if df.empty or sensitive_column not in df.columns or outcome_column not in df.columns:
+            return {"flip_rate": 0, "samples": [], "severity": "Low", "interpretation": "Insufficient data for a counterfactual test."}
+
+        df = df.dropna(subset=[sensitive_column, outcome_column])
+
+        unique_vals = df[sensitive_column].dropna().unique().tolist()
+        if len(unique_vals) < 2:
+            return {"flip_rate": 0, "samples": [], "severity": "Low", "interpretation": "Only one sensitive group was present, so no flip test was possible."}
+
+        X = df.drop(columns=[outcome_column]).copy()
+        y = df[outcome_column].astype(str)
+        X_encoded, categories = _encode_features(X)
+
+        model = DecisionTreeClassifier(max_depth=5, random_state=42)
+        model.fit(X_encoded, y)
+        original_preds = model.predict(X_encoded)
+
+        X_flipped = X.copy()
+        for idx in X_flipped.index:
+            original = X_flipped.at[idx, sensitive_column]
+            replacement = next((v for v in unique_vals if v != original), original)
+            X_flipped.at[idx, sensitive_column] = replacement
+
+        flipped_encoded = pd.DataFrame(index=X_flipped.index)
+        for col in X_flipped.columns:
+            if pd.api.types.is_numeric_dtype(X_flipped[col]):
+                flipped_encoded[col] = pd.to_numeric(X_flipped[col], errors="coerce").fillna(0)
+            else:
+                mapping = categories.get(col, {})
+                flipped_encoded[col] = X_flipped[col].astype(str).fillna("").map(mapping).fillna(-1)
+
+        flipped_preds = model.predict(flipped_encoded)
+        flip_mask = original_preds != flipped_preds
+        flip_rate = float(flip_mask.sum() / len(df) * 100)
+
+        samples = []
+        flipped_indices = df[flip_mask].index.tolist()[:5]
+        for idx in flipped_indices:
+            pos = df.index.get_loc(idx)
+            samples.append({
+                "row": int(pos + 1),
+                "original_sensitive": str(df.at[idx, sensitive_column]),
+                "flipped_sensitive": str(X_flipped.at[idx, sensitive_column]),
+                "original_prediction": str(original_preds[pos]),
+                "flipped_prediction": str(flipped_preds[pos]),
+            })
+
+        if flip_rate < 10:
+            severity = "Low"
+        elif flip_rate <= 25:
+            severity = "Medium"
+        else:
+            severity = "High"
+
+        return {
+            "sensitive_column": sensitive_column,
+            "flip_rate": round(flip_rate, 2),
+            "samples": samples,
+            "severity": severity,
+            "interpretation": analyze_counterfactual(flip_rate, severity),
+        }
+    except Exception as exc:
+        print("Counterfactual error:", exc)
+        return {"flip_rate": 0, "samples": [], "severity": "Low", "interpretation": "Counterfactual test could not be completed."}

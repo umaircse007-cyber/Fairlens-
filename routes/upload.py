@@ -1,48 +1,68 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
-import pandas as pd
-import uuid
+import json
 import os
+import uuid
+
+from fastapi import APIRouter, File, HTTPException, UploadFile
+
+from services.dataset_service import build_column_profile, ensure_data_dirs, infer_favorable_value, infer_outcome_column, load_dataset
 from services.gemini_service import get_gemini_findings
 from services.groq_service import validate_findings_with_claude
 
+
 router = APIRouter()
+
 
 @router.post("/")
 async def upload_dataset(file: UploadFile = File(...)):
+    ensure_data_dirs()
     filename = file.filename or ""
 
     if not filename:
         raise HTTPException(status_code=400, detail="No file uploaded")
 
-    if not filename.lower().endswith((".csv", ".xlsx")):
-        raise HTTPException(status_code=400, detail="Only CSV or Excel allowed")
-    
+    if not filename.lower().endswith((".csv", ".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Only CSV or Excel files are allowed")
+
     file_id = str(uuid.uuid4())
-    filepath = f"data/uploads/{file_id}_{file.filename}"
+    safe_name = os.path.basename(filename).replace(" ", "_")
+    filepath = f"data/uploads/{file_id}_{safe_name}"
+
     with open(filepath, "wb") as f:
         f.write(await file.read())
-        
-    try:
-        df = pd.read_csv(filepath)
-    except Exception as e:
-        raise HTTPException(400, f"Invalid CSV format: {e}")
 
+    try:
+        df = load_dataset(filepath)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Could not read dataset: {exc}")
+
+    if df.empty:
+        raise HTTPException(status_code=400, detail="Dataset is empty")
+
+    profile = build_column_profile(df)
     columns = df.columns.tolist()
-    samples = {}
-    for col in columns:
-        samples[col] = df[col].dropna().head(5).tolist()
-        
-    gemini_findings = get_gemini_findings(columns, samples)
-    final_findings = validate_findings_with_claude(columns, samples, gemini_findings)
-    
-    # Save findings for later use
-    with open(f"data/uploads/{file_id}_findings.json", "w") as f:
-        import json
-        json.dump(final_findings, f)
-        
-    return {
+    gemini_findings = get_gemini_findings(columns, profile)
+    final_findings = validate_findings_with_claude(columns, profile, gemini_findings)
+    outcome_column = infer_outcome_column(df)
+    favorable_value = infer_favorable_value(df, outcome_column)
+
+    meta = {
         "file_id": file_id,
-        "filename": file.filename,
+        "filename": filename,
         "filepath": filepath,
-        "findings": final_findings
+        "row_count": int(len(df)),
+        "column_count": int(len(df.columns)),
+        "columns": columns,
+        "suggested_outcome_column": outcome_column,
+        "suggested_favorable_value": favorable_value,
+    }
+
+    with open(f"data/uploads/{file_id}_findings.json", "w", encoding="utf-8") as f:
+        json.dump(final_findings, f, indent=2)
+
+    with open(f"data/uploads/{file_id}_meta.json", "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2)
+
+    return {
+        **meta,
+        "findings": final_findings,
     }
