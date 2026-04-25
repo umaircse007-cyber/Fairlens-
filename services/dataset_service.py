@@ -201,6 +201,29 @@ def default_audit_columns(findings: list[dict], df: pd.DataFrame, outcome_column
     return filtered
 
 
+def filter_core_audit_columns(selected_columns: list[str], findings: list[dict], df: pd.DataFrame, outcome_column: str) -> list[str]:
+    finding_by_column = {item.get("column"): item for item in findings or []}
+    filtered = []
+
+    for column in selected_columns or []:
+        if column not in df.columns or column == outcome_column:
+            continue
+        if is_identifier_column(column):
+            continue
+
+        finding = finding_by_column.get(column, {})
+        finding_type = str(finding.get("type", "")).lower()
+
+        if finding_type != "sensitive":
+            continue
+        if is_continuous_numeric(df[column]):
+            continue
+
+        filtered.append(column)
+
+    return filtered
+
+
 def build_column_profile(df: pd.DataFrame, sample_size: int = 8) -> dict:
     profile = {}
 

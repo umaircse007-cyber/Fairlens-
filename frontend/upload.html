@@ -126,6 +126,7 @@ newUploadBtn.addEventListener("click", () => {
 async function uploadFile(file) {
     if (!file) return;
 
+    localStorage.removeItem("fairlensConfig");
     loader.classList.remove("hidden");
     dropzone.classList.add("disabled");
 

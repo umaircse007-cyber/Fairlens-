@@ -200,6 +200,9 @@ function renderParity(parity) {
     container.innerHTML = "";
 
     Object.entries(parity).forEach(([column, rows]) => {
+        if (!Array.isArray(rows) || !rows.length) {
+            return;
+        }
         const card = document.createElement("div");
         card.className = "sub-card";
         card.innerHTML = `<h3>${escapeHtml(column)}</h3>`;
@@ -296,7 +299,7 @@ function renderReport(report) {
     document.getElementById("reportSections").innerHTML = Object.entries(sections).map(([title, body]) => `
         <article>
             <h3>${escapeHtml(title)}</h3>
-            <p>${escapeHtml(body)}</p>
+            <p>${escapeHtml(formatReportBody(body))}</p>
         </article>
     `).join("");
 }
@@ -353,6 +356,15 @@ function renderFix(data) {
 
 function formatRatio(value) {
     return typeof value === "number" ? value.toFixed(2) : "N/A";
+}
+
+function formatReportBody(value) {
+    if (typeof value === "string") return value;
+    if (Array.isArray(value)) return value.map(formatReportBody).filter(Boolean).join("; ");
+    if (value && typeof value === "object") {
+        return Object.entries(value).map(([key, item]) => `${key}: ${formatReportBody(item)}`).join("; ");
+    }
+    return String(value ?? "");
 }
 
 async function postJson(url, payload) {

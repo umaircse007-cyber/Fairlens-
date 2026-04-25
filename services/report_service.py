@@ -21,6 +21,29 @@ def safe_load_json(path, default):
         return default
 
 
+def _stringify_report_value(value):
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts = []
+        for item in value:
+            parts.append(_stringify_report_value(item))
+        return "; ".join(part for part in parts if part)
+    if isinstance(value, dict):
+        parts = []
+        for key, item in value.items():
+            parts.append(f"{key}: {_stringify_report_value(item)}")
+        return "; ".join(part for part in parts if part)
+    return str(value)
+
+
+def _normalize_report_sections(sections: dict) -> dict:
+    normalized = {}
+    for title, body in (sections or {}).items():
+        normalized[str(title)] = _stringify_report_value(body)
+    return normalized
+
+
 def generate_report_data(file_id):
     metrics = safe_load_json(f"{UPLOAD_DIR}/{file_id}_metrics.json", {})
     fixed_metrics = safe_load_json(f"{UPLOAD_DIR}/{file_id}_fixed_metrics.json", {})
@@ -38,7 +61,7 @@ def generate_report_data(file_id):
         "eu_clauses": eu_data,
     }
 
-    sections = generate_report_sections(audit_results)
+    sections = _normalize_report_sections(generate_report_sections(audit_results))
 
     return {
         "filename": upload_meta.get("filename", "Uploaded dataset"),
