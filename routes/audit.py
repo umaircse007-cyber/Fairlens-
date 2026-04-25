@@ -3,6 +3,7 @@ import os
 
 from fastapi import APIRouter, Body, HTTPException
 
+from services.dataset_service import is_identifier_column, load_dataset
 from services.metrics_service import calculate_fairness_metrics
 
 
@@ -20,12 +21,21 @@ async def run_audit(
     if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="Dataset not found")
 
-    if not sensitive_columns:
+    df = load_dataset(filepath)
+    if df.empty:
+        raise HTTPException(status_code=400, detail="Dataset is empty")
+
+    filtered_sensitive_columns = [
+        col for col in sensitive_columns
+        if col in df.columns and col != outcome_column and not is_identifier_column(col)
+    ]
+
+    if not filtered_sensitive_columns:
         raise HTTPException(status_code=400, detail="Select at least one sensitive or proxy column")
 
     metrics = calculate_fairness_metrics(
         filepath,
-        sensitive_columns,
+        filtered_sensitive_columns,
         outcome_column,
         favorable_value,
     )
@@ -36,4 +46,5 @@ async def run_audit(
     return {
         "mode": "full_audit",
         "metrics": metrics,
+        "selected_sensitive_columns": filtered_sensitive_columns,
     }

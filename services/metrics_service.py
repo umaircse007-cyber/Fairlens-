@@ -1,6 +1,6 @@
 import pandas as pd
 
-from services.dataset_service import load_dataset
+from services.dataset_service import is_continuous_numeric, is_identifier_column, load_dataset
 
 
 MIN_GROUP_FLOOR = 5
@@ -31,6 +31,8 @@ def _encode_for_correlation(df: pd.DataFrame, outcome_column: str, favorable_val
     for col in df.columns:
         if col == outcome_column:
             continue
+        if is_identifier_column(col):
+            continue
         series = df[col]
         if pd.api.types.is_numeric_dtype(series):
             encoded[col] = pd.to_numeric(series, errors="coerce")
@@ -39,19 +41,6 @@ def _encode_for_correlation(df: pd.DataFrame, outcome_column: str, favorable_val
             encoded[col] = codes
 
     return encoded
-
-
-def _is_continuous_column(series: pd.Series) -> bool:
-    if not pd.api.types.is_numeric_dtype(series):
-        return False
-
-    non_null = series.dropna()
-    if non_null.empty:
-        return False
-
-    unique_count = non_null.nunique()
-    return unique_count >= max(10, int(len(non_null) * 0.2))
-
 
 def _min_group_size(total_rows: int) -> int:
     return max(MIN_GROUP_FLOOR, int(total_rows * 0.02))
@@ -69,7 +58,10 @@ def calculate_fairness_metrics(filepath, sensitive_columns, outcome_column, favo
             "overall_status": "Insufficient Data",
         }
 
-    sensitive_columns = [c for c in sensitive_columns if c in df.columns and c != outcome_column]
+    sensitive_columns = [
+        c for c in sensitive_columns
+        if c in df.columns and c != outcome_column and not is_identifier_column(c)
+    ]
     df = df.dropna(subset=sensitive_columns + [outcome_column])
 
     if df.empty or not sensitive_columns:
@@ -93,7 +85,7 @@ def calculate_fairness_metrics(filepath, sensitive_columns, outcome_column, favo
         valid_rates = {}
         skipped_groups = []
 
-        if _is_continuous_column(df[col]):
+        if is_continuous_numeric(df[col]):
             plain_language.append(
                 f"{col} looks like a continuous numeric field, so FairLens skipped disparate impact ratio for it and relies on association metrics instead."
             )

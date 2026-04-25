@@ -1,33 +1,8 @@
 import pandas as pd
 from sklearn.tree import DecisionTreeClassifier
 
-from services.dataset_service import load_dataset
+from services.dataset_service import is_identifier_column, is_protected_column, load_dataset
 from services.groq_service import analyze_counterfactual
-
-
-PROTECTED_HINTS = {
-    "gender",
-    "sex",
-    "age",
-    "age_group",
-    "race",
-    "ethnicity",
-    "religion",
-    "disability",
-    "nationality",
-    "citizenship",
-    "marital",
-    "pregnancy",
-}
-
-IDENTIFIER_HINTS = {
-    "id",
-    "uuid",
-    "applicant_id",
-    "candidate_id",
-    "employee_id",
-    "user_id",
-}
 
 
 def _encode_features(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
@@ -49,12 +24,11 @@ def _select_feature_columns(df: pd.DataFrame, sensitive_column: str, outcome_col
     feature_cols = []
 
     for col in df.columns:
-        key = str(col).strip().lower().replace(" ", "_")
         if col == outcome_column or col == sensitive_column:
             continue
-        if any(hint == key or key.endswith(f"_{hint}") for hint in PROTECTED_HINTS):
+        if is_protected_column(col):
             continue
-        if any(hint == key or hint in key for hint in IDENTIFIER_HINTS):
+        if is_identifier_column(col):
             continue
         feature_cols.append(col)
 

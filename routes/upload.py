@@ -4,7 +4,15 @@ import uuid
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
-from services.dataset_service import build_column_profile, ensure_data_dirs, infer_favorable_value, infer_outcome_column, load_dataset
+from services.dataset_service import (
+    build_column_profile,
+    default_audit_columns,
+    ensure_data_dirs,
+    infer_favorable_value,
+    infer_outcome_column,
+    load_dataset,
+    sanitize_findings,
+)
 from services.gemini_service import get_gemini_findings
 from services.groq_service import validate_findings_with_claude
 
@@ -40,10 +48,12 @@ async def upload_dataset(file: UploadFile = File(...)):
 
     profile = build_column_profile(df)
     columns = df.columns.tolist()
-    gemini_findings = get_gemini_findings(columns, profile)
-    final_findings = validate_findings_with_claude(columns, profile, gemini_findings)
     outcome_column = infer_outcome_column(df)
     favorable_value = infer_favorable_value(df, outcome_column)
+    gemini_findings = get_gemini_findings(columns, profile)
+    validated_findings = validate_findings_with_claude(columns, profile, gemini_findings)
+    final_findings = sanitize_findings(validated_findings, columns, outcome_column)
+    suggested_sensitive_columns = default_audit_columns(final_findings, df, outcome_column)
 
     meta = {
         "file_id": file_id,
@@ -54,6 +64,7 @@ async def upload_dataset(file: UploadFile = File(...)):
         "columns": columns,
         "suggested_outcome_column": outcome_column,
         "suggested_favorable_value": favorable_value,
+        "suggested_sensitive_columns": suggested_sensitive_columns,
     }
 
     with open(f"data/uploads/{file_id}_findings.json", "w", encoding="utf-8") as f:

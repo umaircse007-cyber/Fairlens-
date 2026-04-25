@@ -132,14 +132,27 @@ async function runFullPipeline() {
             favorable_value: config.favorable_value
         });
         auditMetrics = auditRes.metrics;
+        if (Array.isArray(auditRes.selected_sensitive_columns) && auditRes.selected_sensitive_columns.length) {
+            config.sensitive_columns = auditRes.selected_sensitive_columns;
+            localStorage.setItem("fairlensConfig", JSON.stringify(config));
+        }
 
         loadingText.textContent = "Running counterfactual flip test...";
-        cfData = await postJson("/counterfactual/", {
-            file_id: upload.file_id,
-            filepath: upload.filepath,
-            sensitive_column: config.sensitive_columns[0],
-            outcome_column: config.outcome_column
-        });
+        if (config.sensitive_columns.length) {
+            cfData = await postJson("/counterfactual/", {
+                file_id: upload.file_id,
+                filepath: upload.filepath,
+                sensitive_column: config.sensitive_columns[0],
+                outcome_column: config.outcome_column
+            });
+        } else {
+            cfData = {
+                flip_rate: 0,
+                samples: [],
+                severity: "Low",
+                interpretation: "No protected columns were selected for counterfactual testing."
+            };
+        }
 
         loadingText.textContent = "Mapping EU AI Act risk indicators...";
         euData = await postJson("/eu-mapper/", { file_id: upload.file_id });

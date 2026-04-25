@@ -3,6 +3,7 @@ import os
 import re
 from typing import Any
 
+from services.dataset_service import is_merit_based_column
 
 SENSITIVE_HINTS = {
     "gender": "Gender is a protected attribute and can directly affect fairness.",
@@ -36,23 +37,6 @@ PROXY_HINTS = {
     "employment_gap": "Employment gaps may proxy for caregiving, disability, or other protected patterns.",
 }
 
-MERIT_BASED_HINTS = {
-    "education",
-    "degree",
-    "experience",
-    "salary",
-    "compensation",
-    "skill",
-    "skills",
-    "score",
-    "merit",
-    "qualification",
-    "certification",
-    "performance",
-    "tenure",
-}
-
-
 def _clean_json(text: str) -> str:
     text = (text or "").strip()
     if text.startswith("```json"):
@@ -72,7 +56,7 @@ def _heuristic_findings(columns: list[str], profile: dict[str, Any]) -> list[dic
         key = str(col).lower().replace(" ", "_")
         finding_type = None
         reason = ""
-        is_merit_based = any(hint in key for hint in MERIT_BASED_HINTS)
+        is_merit_based = is_merit_based_column(col)
 
         for hint, hint_reason in SENSITIVE_HINTS.items():
             if hint in key:
