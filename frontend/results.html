@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FairLens - Results</title>
     <link rel="stylesheet" href="/static/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
@@ -37,7 +38,7 @@
         </div>
 
         <div class="summary-grid">
-            <div class="metric-card">
+            <div class="metric-card" id="statusCard">
                 <span>Status</span>
                 <strong id="statusValue">-</strong>
             </div>
@@ -180,7 +181,10 @@ function renderAll() {
     loadingPanel.classList.add("hidden");
     resultsPanel.classList.remove("hidden");
 
-    document.getElementById("statusValue").textContent = auditMetrics.overall_status || "Unknown";
+    const status = auditMetrics.overall_status || "Unknown";
+    document.getElementById("statusValue").textContent = status;
+    document.getElementById("statusCard").classList.toggle("pass", status.toLowerCase().includes("pass"));
+    document.getElementById("statusCard").classList.toggle("fail", status.toLowerCase().includes("fail"));
     document.getElementById("flipRateValue").textContent = `${cfData.flip_rate || 0}%`;
     document.getElementById("clauseValue").textContent = String((euData.triggered_clauses || []).length);
 
@@ -253,9 +257,15 @@ function renderCharts(metrics) {
         type: "bar",
         data: {
             labels: dirLabels.length ? dirLabels : ["No data"],
-            datasets: [{ label: "DIR", data: dirValues.length ? dirValues : [0], backgroundColor: "#4f46e5" }]
+            datasets: [{ label: "DIR", data: dirValues.length ? dirValues : [0], backgroundColor: "#3557e8", borderRadius: 6 }]
         },
-        options: { scales: { y: { beginAtZero: true, suggestedMax: 1 } } }
+        options: {
+            plugins: { legend: { labels: { boxWidth: 14, font: { weight: "700" } } } },
+            scales: {
+                y: { beginAtZero: true, suggestedMax: 1, grid: { color: "rgba(100,113,132,0.18)" } },
+                x: { grid: { display: false } }
+            }
+        }
     });
 
     const fiLabels = Object.keys(metrics.feature_influence || {});
@@ -265,9 +275,16 @@ function renderCharts(metrics) {
         type: "bar",
         data: {
             labels: fiLabels.length ? fiLabels : ["No data"],
-            datasets: [{ label: "Influence", data: fiValues.length ? fiValues : [0], backgroundColor: "#0f766e" }]
+            datasets: [{ label: "Influence", data: fiValues.length ? fiValues : [0], backgroundColor: "#0f766e", borderRadius: 6 }]
         },
-        options: { indexAxis: "y", scales: { x: { beginAtZero: true, suggestedMax: 1 } } }
+        options: {
+            indexAxis: "y",
+            plugins: { legend: { labels: { boxWidth: 14, font: { weight: "700" } } } },
+            scales: {
+                x: { beginAtZero: true, suggestedMax: 1, grid: { color: "rgba(100,113,132,0.18)" } },
+                y: { grid: { display: false } }
+            }
+        }
     });
 }
 
