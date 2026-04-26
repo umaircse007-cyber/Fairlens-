@@ -119,7 +119,8 @@ dropzone.addEventListener("drop", event => {
 });
 
 newUploadBtn.addEventListener("click", () => {
-    localStorage.clear();
+    localStorage.removeItem("fairlensUpload");
+    localStorage.removeItem("fairlensConfig");
     window.location.href = "/";
 });
 

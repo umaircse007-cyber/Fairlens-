@@ -46,12 +46,13 @@
 </main>
 
 <script>
+const historySessionId = getHistorySessionId();
 loadHistory();
 
 async function loadHistory() {
     const body = document.getElementById("historyBody");
     try {
-        const res = await fetch("/history/list");
+        const res = await fetch(`/history/list?session_id=${encodeURIComponent(historySessionId)}`);
         const rows = await res.json();
         if (!rows.length) {
             body.innerHTML = `<tr><td colspan="5">No completed audits yet.</td></tr>`;
@@ -70,6 +71,17 @@ async function loadHistory() {
     } catch (err) {
         body.innerHTML = `<tr><td colspan="5">Could not load audit history.</td></tr>`;
     }
+}
+
+function getHistorySessionId() {
+    const existing = localStorage.getItem("fairlensHistorySessionId");
+    if (existing) return existing;
+
+    const generated = crypto.randomUUID
+        ? crypto.randomUUID()
+        : `fairlens-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    localStorage.setItem("fairlensHistorySessionId", generated);
+    return generated;
 }
 
 function escapeHtml(value) {

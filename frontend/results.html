@@ -100,6 +100,7 @@
 <script>
 const upload = JSON.parse(localStorage.getItem("fairlensUpload") || "null");
 const config = JSON.parse(localStorage.getItem("fairlensConfig") || "null");
+const historySessionId = getHistorySessionId();
 
 const loadingPanel = document.getElementById("loadingPanel");
 const loadingText = document.getElementById("loadingText");
@@ -171,6 +172,7 @@ async function runFullPipeline() {
 async function saveHistory() {
     const clauses = euData.triggered_clauses || [];
     await postJson("/history/", {
+        session_id: historySessionId,
         filename: upload.filename,
         compliance_status: clauses.length ? "Non-Compliant" : "Compliant",
         clause_count: clauses.length
@@ -407,6 +409,17 @@ function formatReportBody(value) {
         return Object.entries(value).map(([key, item]) => `${key}: ${formatReportBody(item)}`).join("; ");
     }
     return String(value ?? "");
+}
+
+function getHistorySessionId() {
+    const existing = localStorage.getItem("fairlensHistorySessionId");
+    if (existing) return existing;
+
+    const generated = crypto.randomUUID
+        ? crypto.randomUUID()
+        : `fairlens-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    localStorage.setItem("fairlensHistorySessionId", generated);
+    return generated;
 }
 
 async function postJson(url, payload) {
