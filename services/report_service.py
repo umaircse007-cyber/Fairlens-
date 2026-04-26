@@ -59,7 +59,12 @@ def _build_report_sections(audit_results: dict) -> dict:
     parity = metrics.get("demographic_parity", {})
     continuous = metrics.get("continuous_associations", {})
 
-    flagged_names = [item.get("column") for item in findings if item.get("column")]
+    detected_names = [item.get("column") for item in findings if item.get("column")]
+    flagged_names = [
+        item.get("column")
+        for item in findings
+        if item.get("column") and item.get("correlation_passes", False)
+    ]
     significant_findings = []
 
     for column, test in significance.items():
@@ -80,11 +85,16 @@ def _build_report_sections(audit_results: dict) -> dict:
     if significant_findings:
         bias_findings = " ".join(significant_findings)
     else:
-        audited_columns = ", ".join(disparity.keys() or continuous.keys()) or "selected protected columns"
+        audited_column_names = list(disparity.keys()) + [
+            column for column in continuous.keys() if column not in disparity
+        ]
+        audited_columns = ", ".join(audited_column_names) or "selected protected columns"
         bias_findings = f"No statistically significant bias detected across {audited_columns}."
 
     if flagged_names:
-        executive = f"FairLens reviewed the uploaded dataset and flagged these columns after correlation testing: {', '.join(flagged_names)}."
+        executive = f"FairLens reviewed the uploaded dataset and found statistically supported fairness signals in: {', '.join(flagged_names)}."
+    elif detected_names:
+        executive = f"FairLens detected columns worth reviewing ({', '.join(detected_names)}), but none showed statistically supported bias in the current dataset."
     else:
         executive = "FairLens reviewed the uploaded dataset and did not find any statistically supported sensitive or proxy columns that warranted a fairness warning."
 

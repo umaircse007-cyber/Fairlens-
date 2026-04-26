@@ -5,7 +5,7 @@ def map_eu_clauses(metrics, flip_rate, primary_findings):
     triggered_clauses = []
 
     for col, result in metrics.get("disparate_impact_ratio", {}).items():
-        if result.get("ratio", 1) < 0.8:
+        if result.get("ratio", 1) < 0.8 and result.get("significant", False):
             triggered_clauses.append({
                 "clause": "Article 10(2)(f)",
                 "title": "Data Governance",
@@ -29,7 +29,10 @@ def map_eu_clauses(metrics, flip_rate, primary_findings):
             "severity": "Limited Risk",
         })
 
-    if any(str(f.get("type", "")).lower() == "proxy" for f in primary_findings or []):
+    if any(
+        str(f.get("type", "")).lower() == "proxy" and f.get("correlation_passes", False)
+        for f in primary_findings or []
+    ):
         triggered_clauses.append({
             "clause": "Article 13",
             "title": "Transparency",

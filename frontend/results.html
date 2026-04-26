@@ -184,7 +184,7 @@ function renderAll() {
     document.getElementById("flipRateValue").textContent = `${cfData.flip_rate || 0}%`;
     document.getElementById("clauseValue").textContent = String((euData.triggered_clauses || []).length);
 
-    renderParity(auditMetrics.demographic_parity || {});
+    renderParity(auditMetrics.demographic_parity || {}, auditMetrics.continuous_associations || {});
     renderCharts(auditMetrics);
     renderCounterfactual(cfData);
     renderEu(euData.triggered_clauses || []);
@@ -195,7 +195,7 @@ function renderAll() {
     reportDownload.classList.remove("hidden");
 }
 
-function renderParity(parity) {
+function renderParity(parity, continuousAssociations) {
     const container = document.getElementById("parityCards");
     container.innerHTML = "";
 
@@ -217,6 +217,27 @@ function renderParity(parity) {
         });
         container.appendChild(card);
     });
+
+    Object.entries(continuousAssociations || {}).forEach(([column, stats]) => {
+        const card = document.createElement("div");
+        card.className = "sub-card";
+        const signal = stats.significant ? "Statistical signal detected" : "No statistically significant signal";
+        card.innerHTML = `
+            <h3>${escapeHtml(column)}</h3>
+            <p>${escapeHtml(column)} is continuous, so FairLens reports correlation instead of a bucketed 80% rule.</p>
+            <div class="stat-list">
+                <span>Correlation r</span><strong>${formatNumber(stats.r)}</strong>
+                <span>p-value</span><strong>${formatNumber(stats.p_value)}</strong>
+                <span>Sample size</span><strong>${escapeHtml(stats.sample_size)}</strong>
+                <span>Status</span><strong>${escapeHtml(signal)}</strong>
+            </div>
+        `;
+        container.appendChild(card);
+    });
+
+    if (!container.children.length) {
+        container.innerHTML = `<div class="empty-state">No protected columns were selected for demographic parity review.</div>`;
+    }
 }
 
 function renderCharts(metrics) {
@@ -356,6 +377,10 @@ function renderFix(data) {
 
 function formatRatio(value) {
     return typeof value === "number" ? value.toFixed(2) : "N/A";
+}
+
+function formatNumber(value) {
+    return typeof value === "number" ? value.toFixed(4) : "N/A";
 }
 
 function formatReportBody(value) {

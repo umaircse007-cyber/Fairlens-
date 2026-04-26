@@ -179,6 +179,13 @@ function renderFindings(data) {
         const row = document.createElement("label");
         row.className = "finding-item";
         const isRecommended = recommended.has(finding.column) || !!finding.recommended;
+        const evidenceStatus = finding.evidence_status || (finding.correlation_passes ? "Flagged" : "Detected");
+        const evidenceBadge = evidenceStatus === "Flagged"
+            ? '<span class="badge orange">statistical signal</span>'
+            : '<span class="badge neutral">review column</span>';
+        const statsText = typeof finding.correlation_r === "number"
+            ? `Correlation r=${finding.correlation_r}, p=${finding.correlation_p}, n=${finding.sample_size}`
+            : "";
         row.innerHTML = `
             <input type="checkbox" value="${escapeHtml(finding.column)}" ${isRecommended ? "checked" : ""}>
             <div>
@@ -186,9 +193,11 @@ function renderFindings(data) {
                     <strong>${escapeHtml(finding.column)}</strong>
                     <span class="badge ${finding.type === "sensitive" ? "red" : "blue"}">${escapeHtml(finding.type || "flagged")}</span>
                     <span class="badge neutral">${escapeHtml(finding.confidence || "Medium")}</span>
+                    ${evidenceBadge}
                     ${isRecommended ? '<span class="badge green">recommended</span>' : ""}
                 </div>
                 <p>${escapeHtml(finding.reason || "Potential fairness-relevant column.")}</p>
+                ${statsText ? `<p class="muted">${escapeHtml(statsText)}</p>` : ""}
             </div>
         `;
         findingsList.appendChild(row);

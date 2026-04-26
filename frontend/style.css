@@ -331,6 +331,23 @@ select {
     margin-bottom: 6px;
 }
 
+.muted {
+    color: var(--muted);
+    font-size: 0.9rem;
+}
+
+.stat-list {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px 18px;
+    margin-top: 14px;
+    align-items: center;
+}
+
+.stat-list span {
+    color: var(--muted);
+}
+
 .summary-grid {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));

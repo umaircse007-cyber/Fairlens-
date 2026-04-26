@@ -217,8 +217,10 @@ def sanitize_findings(findings: list[dict], columns: list[str], outcome_column: 
             continue
 
         stats = correlation_gate(df, column, outcome_column, favorable_value)
-        if not stats["passes"]:
-            continue
+        evidence_status = "Flagged" if stats["passes"] else "Clean"
+        confidence = str(finding.get("confidence", "Medium"))
+        if evidence_status == "Clean" and confidence.lower() == "high":
+            confidence = "Medium"
 
         key = (column, finding_type)
         if key in seen:
@@ -229,8 +231,10 @@ def sanitize_findings(findings: list[dict], columns: list[str], outcome_column: 
             "type": finding_type,
             "reason": str(finding.get("reason", "Potential fairness-relevant column.")),
             "source": str(finding.get("source", "FairLens")),
-            "confidence": str(finding.get("confidence", "Medium")),
+            "confidence": confidence,
             "recommended": finding_type == "sensitive",
+            "evidence_status": evidence_status,
+            "correlation_passes": bool(stats["passes"]),
             "correlation_r": round(stats["r"], 4),
             "correlation_p": round(stats["p"], 4),
             "sample_size": stats["n"],

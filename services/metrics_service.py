@@ -156,6 +156,7 @@ def calculate_fairness_metrics(filepath, sensitive_columns, outcome_column, favo
                 "ratio": round(ratio, 4),
                 "percent": round(ratio * 100, 1),
                 "passes_80_rule": ratio >= 0.8,
+                "significant": bool(significance_tests.get(col, {}).get("significant", False)),
                 "lowest_group": str(min_group),
                 "highest_group": str(max_group),
                 "lowest_rate": round(min_rate, 4),
