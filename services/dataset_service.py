@@ -304,6 +304,14 @@ def build_column_profile(df: pd.DataFrame, sample_size: int = 8) -> dict:
 
 def infer_outcome_column(df: pd.DataFrame) -> str:
     preferred_names = [
+        "ai_decision",
+        "model_decision",
+        "algorithm_decision",
+        "prediction",
+        "predicted_outcome",
+        "decision_outcome",
+        "final_decision",
+        "outcome_label",
         "hired",
         "hire",
         "selected",
@@ -318,12 +326,22 @@ def infer_outcome_column(df: pd.DataFrame) -> str:
         "target",
     ]
 
-    lower_to_actual = {str(c).strip().lower(): c for c in df.columns}
+    lower_to_actual = {normalize_column_name(c): c for c in df.columns}
     for name in preferred_names:
         if name in lower_to_actual:
             return lower_to_actual[name]
 
+    for col in df.columns:
+        key = normalize_column_name(col)
+        if "override" in key:
+            continue
+        if key.endswith("_decision") or key.endswith("_outcome") or key.endswith("_label"):
+            return col
+
     for col in reversed(df.columns.tolist()):
+        key = normalize_column_name(col)
+        if "override" in key or is_identifier_column(col):
+            continue
         values = set(str(v).strip().lower() for v in df[col].dropna().unique()[:20])
         if values and values.issubset({"yes", "no", "true", "false", "1", "0", "hired", "rejected", "approved", "denied"}):
             return col
